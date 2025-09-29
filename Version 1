@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>NFL — TD Scorers</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --text:#111; --muted:#666; --rule:#eee; --accent:#0d6efd; }
+    body { font:16px system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:2rem; color:var(--text); }
+    h1 { margin:.25rem 0 .5rem }
+    #stamp { color:var(--muted); margin-bottom:.5rem }
+    .small { color:var(--muted); font-size:.9em }
+    ul { list-style:none; padding:0; margin:0 }
+    li { padding:.5rem 0; border-bottom:1px solid var(--rule); display:flex; align-items:center; gap:.6rem; }
+    .logo { width:28px; height:28px; object-fit:contain; flex:0 0 28px; }
+    .row { display:flex; flex-direction:column; }
+    .line { display:inline-block; }
+    #status { margin:.5rem 0 1rem; }
+    #attrib {
+      background:#f6f6f6; border:1px solid var(--rule); padding:8px 12px; border-radius:8px;
+      font-size:.9em; color:var(--muted); margin-bottom:12px;
+    }
+    #attrib a { color:inherit; text-decoration:underline; }
+
+    /* Tabs */
+    #tabs { display:flex; flex-wrap:wrap; gap:6px; margin:.5rem 0 1rem; }
+    .tab {
+      border:1px solid var(--rule); padding:6px 10px; border-radius:999px; cursor:pointer;
+      background:#fff; font-size:.9em; user-select:none;
+    }
+    .tab:hover { border-color:#d7d7d7; }
+    .tab.active {
+      background:var(--accent); color:#fff; border-color:var(--accent);
+    }
+    #auto-note { margin-top:-.25rem; margin-bottom:.75rem; color:var(--muted); font-size:.9em; }
+  </style>
+</head>
+<body>
+  <div id="attrib">Data source: ESPN public score APIs (unofficial/open endpoints).</div>
+
+  <h1 id="title">TD Scorers — Current Week</h1>
+  <div id="auto-note" class="small"></div>
+  <div id="tabs" aria-label="Weeks (regular season)"></div>
+
+  <div id="stamp" class="small"></div>
+  <div id="status">Loading…</div>
+  <ul id="list"></ul>
+
+  <script>
+  (async function () {
+    const titleEl = document.getElementById('title');
+    const tabsEl  = document.getElementById('tabs');
+    const status  = document.getElementById('status');
+    const list    = document.getElementById('list');
+    const stamp   = document.getElementById('stamp');
+    const autoNote= document.getElementById('auto-note');
+
+    const TOTAL_REG_WEEKS = 18; // NFL regular season
+    let currentSeasonYear = null;
+    let currentSeasonType = 2; // 1=Pre, 2=Reg, 3=Post
+    let currentWeek = null;
+
+    let activeSeasonType = 2;  // what the UI is showing
+    let activeWeek = null;
+    let refreshTimer = null;
+
+    // ---- helpers ------------------------------------------------------------
+    function tdCategory(p) {
+      const txt = (p.text || '').toLowerCase();
+      const players = Array.isArray(p.players) ? p.players : [];
+      const types = players.map(x => (x && x.type && x.type.text ? x.type.text.toLowerCase() : '')).join(' ');
+
+      if (/receive|reception|receiver/.test(types)) return 'Receiving';
+      if (/rush|rusher|run/.test(types)) return 'Rushing';
+      if (/kickoff return|punt return|returner/.test(types)) return 'Return';
+      if (/interception/.test(types)) return 'INT Return';
+      if (/fumble/.test(types)) return 'Fumble Return';
+
+      if (/(pass|from)/.test(txt) && !/interception/.test(txt)) return 'Receiving';
+      if (/\brun|\brush|\bkeeper/.test(txt)) return 'Rushing';
+      if (/kickoff return|punt return/.test(txt)) return 'Return';
+      if (/interception.*return|pick[- ]?six/.test(txt)) return 'INT Return';
+      if (/fumble.*return|fumble.*recovery/.test(txt)) return 'Fumble Return';
+      return 'TD';
+    }
+
+    function setTitle(seasonType, weekNum) {
+      let label = 'Current Week';
+      if (seasonType === 2 && weekNum) {
+        label = `Week ${weekNum} of ${TOTAL_REG_WEEKS}`;
+      } else if (seasonType === 1 && weekNum) {
+        label = `Preseason Week ${weekNum}`;
+      } else if (seasonType === 3 && weekNum) {
+        label = `Postseason Week ${weekNum}`;
+      }
+      titleEl.textContent = `TD Scorers — ${label}`;
+    }
+
+    function setAutoNote() {
+      if (activeSeasonType === 2 && activeWeek === currentWeek) {
+        autoNote.textContent = 'Auto-refreshing current week every 2 minutes.';
+      } else {
+        autoNote.textContent = 'Viewing historical week (auto-refresh paused).';
+      }
+    }
+
+    function startAutoRefresh() {
+      stopAutoRefresh();
+      if (activeSeasonType === 2 && activeWeek === currentWeek) {
+        refreshTimer = setInterval(() => {
+          loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
+        }, 120000); // 2 minutes
+      }
+      setAutoNote();
+    }
+    function stopAutoRefresh() {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+    }
+
+    function renderTabs(currentWk) {
+      tabsEl.innerHTML = '';
+      for (let w = 1; w <= TOTAL_REG_WEEKS; w++) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'tab' + (w === activeWeek ? ' active' : '');
+        btn.textContent = `Week ${w}`;
+        btn.setAttribute('aria-pressed', String(w === activeWeek));
+        btn.addEventListener('click', () => {
+          if (activeWeek === w) return;
+          activeSeasonType = 2; // tabs only cover regular season
+          activeWeek = w;
+          loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
+          // update active style
+          for (const n of tabsEl.querySelectorAll('.tab')) n.classList.remove('active');
+          btn.classList.add('active');
+        });
+        tabsEl.appendChild(btn);
+      }
+    }
+
+    async function getScoreboard(seasonType, weekNum, year) {
+      // Build ESPN scoreboard URL with explicit params for deterministic history browsing
+      const url = new URL('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+      if (seasonType) url.searchParams.set('seasontype', String(seasonType));
+      if (weekNum)     url.searchParams.set('week', String(weekNum));
+      if (year)        url.searchParams.set('year', String(year));
+      const r = await fetch(url).then(r => r.json());
+      return r;
+    }
+
+    async function loadWeek(seasonType, weekNum, year) {
+      try {
+        status.textContent = 'Loading…';
+        list.innerHTML = '';
+
+        // Scoreboard (explicit so week history is stable)
+        const sb = await getScoreboard(seasonType, weekNum, year);
+
+        // Update title if ESPN returns a different week (rare)
+        const wk = sb?.week?.number || weekNum;
+        const st = sb?.season?.type || seasonType;
+        setTitle(st, wk);
+
+        // Build team metadata (abbr + logo)
+        const teamMetaById = new Map();
+        const teamMetaByAbbr = new Map();
+        const events = Array.isArray(sb.events) ? sb.events : [];
+        for (const ev of events) {
+          const comps = ev?.competitions?.[0]?.competitors || [];
+          for (const c of comps) {
+            const t = c?.team;
+            if (!t) continue;
+            const id = t.id, abbr = t.abbreviation;
+            const logo = (t.logos && t.logos[0]?.href) || t.logo || null;
+            if (id && abbr) {
+              if (!teamMetaById.has(id)) teamMetaById.set(id, { abbr, logo });
+              if (!teamMetaByAbbr.has(abbr)) teamMetaByAbbr.set(abbr, { abbr, logo });
+            }
+          }
+        }
+
+        if (!events.length) {
+          status.textContent = 'No games found for this week.';
+          list.innerHTML = '';
+          return;
+        }
+
+        // Summaries -> TD aggregation
+        const byPlayer = new Map(); // key -> { total, byType:{}, logo, abbr }
+        const seenPlays = new Set();
+
+        function addTD(name, teamAbbr, logoUrl) {
+          const key = `${name} (${teamAbbr})`;
+          if (!byPlayer.has(key)) byPlayer.set(key, { total: 0, byType: {}, logo: logoUrl || '', abbr: teamAbbr });
+          const row = byPlayer.get(key);
+          row.total += 1;
+          return row;
+        }
+
+        async function processEvent(ev) {
+          const id = ev.id || (ev.uid && ev.uid.split('~').pop());
+          if (!id) return;
+          const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${id}`;
+          const data = await fetch(summaryUrl).then(r => r.json());
+          const plays = Array.isArray(data.scoringPlays) ? data.scoringPlays : [];
+          for (const p of plays) {
+            const unique = p.id || `${id}:${p.clock && p.clock.displayValue}:${p.text}`;
+            if (seenPlays.has(unique)) continue;
+            seenPlays.add(unique);
+
+            const isTD = String(p.type && p.type.text || '').toLowerCase().includes('touchdown')
+                      || /\btd\b|touchdown/.test((p.text || '').toLowerCase());
+            if (!isTD) continue;
+
+            const teamId = p.team?.id, teamAbbr = p.team?.abbreviation || '';
+            const meta = (teamId && teamMetaById.get(teamId)) || teamMetaByAbbr.get(teamAbbr) || { abbr: teamAbbr, logo: '' };
+            const cat = tdCategory(p);
+
+            const players = Array.isArray(p.players) ? p.players : [];
+            const primary = players.find(x =>
+              x && x.type && /scorer|rush|receive|return|interception|fumble/i.test(x.type.text || '')
+            );
+
+            let row;
+            if (primary?.athlete?.displayName) {
+              row = addTD(primary.athlete.displayName, meta.abbr || teamAbbr, meta.logo);
+            } else {
+              const m = /([A-Z][\w.\-'\s]+)\s+\d+\s*(yd|yard)/i.exec(p.text || '');
+              row = addTD(m ? m[1].trim() : 'Unknown', meta.abbr || teamAbbr, meta.logo);
+            }
+            row.byType[cat] = (row.byType[cat] || 0) + 1;
+          }
+        }
+
+        // Gentle concurrency
+        for (let i = 0; i < events.length; i += 6) {
+          await Promise.all(events.slice(i, i + 6).map(processEvent));
+        }
+
+        // Render
+        const rows = [...byPlayer.entries()]
+          .sort((a, b) => b[1].total - a[1].total)
+          .map(([label2, info]) => {
+            const breakdown = Object.entries(info.byType)
+              .sort((a,b)=> b[1]-a[1])
+              .map(([k,v]) => `${k.replace(' Return',' Ret')}: ${v}`)
+              .join(', ');
+            const logo = info.logo ? `<img class="logo" src="${info.logo}" alt="${info.abbr} logo" loading="lazy">`
+                                   : `<span class="logo" aria-hidden="true"></span>`;
+            return `<li>${logo}<span class="row">
+                <span class="line"><strong>${label2}</strong> — ${info.total} TD${info.total>1?'s':''}</span>
+                ${breakdown ? `<span class="line small">[${breakdown}]</span>` : ''}
+              </span></li>`;
+          });
+
+        list.innerHTML = rows.join('') || '<li>No TDs recorded yet.</li>';
+        status.textContent = '';
+        stamp.textContent = `Last fetched: ${new Date().toLocaleString()}`;
+
+        // (Re)start auto-refresh logic if on current week
+        startAutoRefresh();
+      } catch (err) {
+        console.error(err);
+        status.textContent = 'Could not load TD scorers.';
+      }
+    }
+
+    // ---- init: detect current week + year, then render tabs & load ----------
+    try {
+      const sbNow = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard').then(r => r.json());
+      currentSeasonYear = sbNow?.season?.year || new Date().getFullYear();
+      currentSeasonType = sbNow?.season?.type || 2;
+      currentWeek = sbNow?.week?.number || 1;
+
+      // Use current regular-season week as the default active
+      activeSeasonType = 2;
+      activeWeek = (currentSeasonType === 2 && currentWeek) ? currentWeek : currentWeek || 1;
+
+      // Build regular-season week tabs
+      renderTabs(currentWeek);
+
+      // Mark active tab
+      const buttons = tabsEl.querySelectorAll('.tab');
+      if (buttons[activeWeek - 1]) buttons[activeWeek - 1].classList.add('active');
+
+      // Initial load
+      await loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Failed to initialize.';
+    }
+  })();
+  </script>
+</body>
+</html>
