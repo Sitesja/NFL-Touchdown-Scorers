@@ -1,12 +1,12 @@
-<!doctype html>
+<head><!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>NFL — TD Scorers</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --text:#111; --muted:#666; --rule:#eee; --accent:#0d6efd; }
-    body { font:16px system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:2rem; color:var(--text); }
+    :root { --text:#111; --muted:#666; --rule:#eee; --accent:#0d6efd; --bg:#fff; }
+    body { font:16px system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:2rem; color:var(--text); background:var(--bg); }
     h1 { margin:.25rem 0 .5rem }
     #stamp { color:var(--muted); margin-bottom:.5rem }
     .small { color:var(--muted); font-size:.9em }
@@ -16,31 +16,84 @@
     .row { display:flex; flex-direction:column; }
     .line { display:inline-block; }
     #status { margin:.5rem 0 1rem; }
+
+    /* Right-side floating banner (sticky/fixed) */
+    #side-banner {
+      position: fixed;        /* stays visible while scrolling */
+      top: 24px;
+      right: 24px;
+      max-width: 280px;
+      background: #f0f8ff;
+      border: 2px solid var(--accent);
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.12);
+      z-index: 999;           /* above page content */
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    /* Attribution + UI chrome */
     #attrib {
       background:#f6f6f6; border:1px solid var(--rule); padding:8px 12px; border-radius:8px;
-      font-size:.9em; color:var(--muted); margin-bottom:12px;
+      font-size:.9em; color:var(--muted); margin-bottom:12px; max-width: 860px;
     }
     #attrib a { color:inherit; text-decoration:underline; }
 
     /* Tabs */
-    #tabs { display:flex; flex-wrap:wrap; gap:6px; margin:.5rem 0 1rem; }
+    #tabs { display:flex; flex-wrap:wrap; gap:6px; margin:.5rem 0 1rem; max-width: 860px; }
     .tab {
       border:1px solid var(--rule); padding:6px 10px; border-radius:999px; cursor:pointer;
       background:#fff; font-size:.9em; user-select:none;
     }
     .tab:hover { border-color:#d7d7d7; }
-    .tab.active {
-      background:var(--accent); color:#fff; border-color:var(--accent);
+    .tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+    #auto-note { margin-top:-.25rem; margin-bottom:.75rem; color:var(--muted); font-size:.9em; max-width: 860px; }
+
+    /* Controls */
+    #controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:.25rem 0 1rem; max-width: 860px; }
+    #controls label { font-size:.9em; color:var(--muted); }
+    #controls select {
+      padding:6px 8px; border:1px solid var(--rule); border-radius:6px; font-size:.95em; background:#fff;
     }
-    #auto-note { margin-top:-.25rem; margin-bottom:.75rem; color:var(--muted); font-size:.9em; }
+
+    /* Main list constrained to readable width on large screens */
+    #list, #title, #stamp, #status { max-width: 860px; }
+
+    /* Responsive: on narrow screens, convert the side banner into a top banner */
+    @media (max-width: 1100px) {
+      #side-banner {
+        position: static;    /* becomes part of flow */
+        max-width: 100%;
+        margin-bottom: 12px;
+      }
+    }
   </style>
 </head>
 <body>
+  <!-- Sticky / floating banner (moves to top on small screens) -->
+  <aside id="side-banner" role="complementary" aria-label="Site message">
+    🏈 Thanks for using Justin's TD tracker. Go Patriots.
+  </aside>
+
   <div id="attrib">Data source: ESPN public score APIs (unofficial/open endpoints).</div>
 
   <h1 id="title">TD Scorers — Current Week</h1>
   <div id="auto-note" class="small"></div>
   <div id="tabs" aria-label="Weeks (regular season)"></div>
+
+  <div id="controls">
+    <label for="teamFilter">Team:</label>
+    <select id="teamFilter">
+      <option value="">All teams</option>
+    </select>
+
+    <label for="sortMode">Sort:</label>
+    <select id="sortMode">
+      <option value="td">Most TDs</option>
+      <option value="name">A–Z by player</option>
+    </select>
+  </div>
 
   <div id="stamp" class="small"></div>
   <div id="status">Loading…</div>
@@ -54,6 +107,8 @@
     const list    = document.getElementById('list');
     const stamp   = document.getElementById('stamp');
     const autoNote= document.getElementById('auto-note');
+    const teamFilterEl = document.getElementById('teamFilter');
+    const sortModeEl   = document.getElementById('sortMode');
 
     const TOTAL_REG_WEEKS = 18; // NFL regular season
     let currentSeasonYear = null;
@@ -63,6 +118,9 @@
     let activeSeasonType = 2;  // what the UI is showing
     let activeWeek = null;
     let refreshTimer = null;
+
+    // In-memory data for the currently loaded week
+    let currentItems = []; // array of { key,label,name,abbr,logo,total,byType }
 
     // ---- helpers ------------------------------------------------------------
     function tdCategory(p) {
@@ -114,10 +172,7 @@
       setAutoNote();
     }
     function stopAutoRefresh() {
-      if (refreshTimer) {
-        clearInterval(refreshTimer);
-        refreshTimer = null;
-      }
+      if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
     }
 
     function renderTabs(currentWk) {
@@ -130,8 +185,11 @@
         btn.setAttribute('aria-pressed', String(w === activeWeek));
         btn.addEventListener('click', () => {
           if (activeWeek === w) return;
-          activeSeasonType = 2; // tabs only cover regular season
+          activeSeasonType = 2; // tabs are for regular season
           activeWeek = w;
+          // Clear filter/sort to keep behavior predictable on week switch
+          teamFilterEl.value = '';
+          sortModeEl.value = 'td';
           loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
           // update active style
           for (const n of tabsEl.querySelectorAll('.tab')) n.classList.remove('active');
@@ -142,7 +200,6 @@
     }
 
     async function getScoreboard(seasonType, weekNum, year) {
-      // Build ESPN scoreboard URL with explicit params for deterministic history browsing
       const url = new URL('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
       if (seasonType) url.searchParams.set('seasontype', String(seasonType));
       if (weekNum)     url.searchParams.set('week', String(weekNum));
@@ -151,22 +208,61 @@
       return r;
     }
 
+    function populateTeamFilterFromSet(teamAbbrSet) {
+      const currentValue = teamFilterEl.value;
+      teamFilterEl.innerHTML = '<option value="">All teams</option>';
+      const abbrs = Array.from(teamAbbrSet).sort();
+      for (const ab of abbrs) {
+        const opt = document.createElement('option');
+        opt.value = ab;
+        opt.textContent = ab;
+        teamFilterEl.appendChild(opt);
+      }
+      if (abbrs.includes(currentValue)) teamFilterEl.value = currentValue; else teamFilterEl.value = '';
+    }
+
+    function renderList() {
+      const team = teamFilterEl.value;
+      const sort = sortModeEl.value; // 'td' or 'name'
+
+      let rows = currentItems.slice();
+      if (team) rows = rows.filter(r => r.abbr === team);
+
+      if (sort === 'name') {
+        rows.sort((a,b) => a.name.localeCompare(b.name, 'en', {sensitivity:'base'}));
+      } else {
+        rows.sort((a,b) => b.total - a.total || a.name.localeCompare(b.name));
+      }
+
+      list.innerHTML = rows.map(info => {
+        const breakdown = Object.entries(info.byType)
+          .sort((a,b)=> b[1]-a[1])
+          .map(([k,v]) => `${k.replace(' Return',' Ret')}: ${v}`)
+          .join(', ');
+        const logo = info.logo ? `<img class="logo" src="${info.logo}" alt="${info.abbr} logo" loading="lazy">`
+                               : `<span class="logo" aria-hidden="true"></span>`;
+        return `<li>${logo}<span class="row">
+            <span class="line"><strong>${info.label}</strong> — ${info.total} TD${info.total>1?'s':''}</span>
+            ${breakdown ? `<span class="line small">[${breakdown}]</span>` : ''}
+          </span></li>`;
+      }).join('') || '<li>No TDs recorded yet.</li>';
+    }
+
     async function loadWeek(seasonType, weekNum, year) {
       try {
         status.textContent = 'Loading…';
         list.innerHTML = '';
 
-        // Scoreboard (explicit so week history is stable)
         const sb = await getScoreboard(seasonType, weekNum, year);
 
-        // Update title if ESPN returns a different week (rare)
         const wk = sb?.week?.number || weekNum;
         const st = sb?.season?.type || seasonType;
         setTitle(st, wk);
 
-        // Build team metadata (abbr + logo)
+        // Build team metadata (abbr + logo) and gather set for filter
         const teamMetaById = new Map();
         const teamMetaByAbbr = new Map();
+        const teamSet = new Set();
         const events = Array.isArray(sb.events) ? sb.events : [];
         for (const ev of events) {
           const comps = ev?.competitions?.[0]?.competitors || [];
@@ -178,26 +274,30 @@
             if (id && abbr) {
               if (!teamMetaById.has(id)) teamMetaById.set(id, { abbr, logo });
               if (!teamMetaByAbbr.has(abbr)) teamMetaByAbbr.set(abbr, { abbr, logo });
+              teamSet.add(abbr);
             }
           }
         }
 
+        populateTeamFilterFromSet(teamSet);
+
         if (!events.length) {
           status.textContent = 'No games found for this week.';
           list.innerHTML = '';
+          currentItems = [];
           return;
         }
 
         // Summaries -> TD aggregation
-        const byPlayer = new Map(); // key -> { total, byType:{}, logo, abbr }
+        const byPlayer = new Map(); // key -> { total, byType:{}, logo, abbr, name, label }
         const seenPlays = new Set();
 
-        function addTD(name, teamAbbr, logoUrl) {
-          const key = `${name} (${teamAbbr})`;
-          if (!byPlayer.has(key)) byPlayer.set(key, { total: 0, byType: {}, logo: logoUrl || '', abbr: teamAbbr });
-          const row = byPlayer.get(key);
-          row.total += 1;
-          return row;
+        function ensureRow(name, abbr, logoUrl) {
+          const label = `${name} (${abbr})`;
+          if (!byPlayer.has(label)) byPlayer.set(label, {
+            total: 0, byType: {}, logo: logoUrl || '', abbr, name, label
+          });
+          return byPlayer.get(label);
         }
 
         async function processEvent(ev) {
@@ -226,37 +326,25 @@
 
             let row;
             if (primary?.athlete?.displayName) {
-              row = addTD(primary.athlete.displayName, meta.abbr || teamAbbr, meta.logo);
+              row = ensureRow(primary.athlete.displayName, meta.abbr || teamAbbr, meta.logo);
             } else {
               const m = /([A-Z][\w.\-'\s]+)\s+\d+\s*(yd|yard)/i.exec(p.text || '');
-              row = addTD(m ? m[1].trim() : 'Unknown', meta.abbr || teamAbbr, meta.logo);
+              const name = m ? m[1].trim() : 'Unknown';
+              row = ensureRow(name, meta.abbr || teamAbbr, meta.logo);
             }
+            row.total += 1;
             row.byType[cat] = (row.byType[cat] || 0) + 1;
           }
         }
 
-        // Gentle concurrency
         for (let i = 0; i < events.length; i += 6) {
           await Promise.all(events.slice(i, i + 6).map(processEvent));
         }
 
-        // Render
-        const rows = [...byPlayer.entries()]
-          .sort((a, b) => b[1].total - a[1].total)
-          .map(([label2, info]) => {
-            const breakdown = Object.entries(info.byType)
-              .sort((a,b)=> b[1]-a[1])
-              .map(([k,v]) => `${k.replace(' Return',' Ret')}: ${v}`)
-              .join(', ');
-            const logo = info.logo ? `<img class="logo" src="${info.logo}" alt="${info.abbr} logo" loading="lazy">`
-                                   : `<span class="logo" aria-hidden="true"></span>`;
-            return `<li>${logo}<span class="row">
-                <span class="line"><strong>${label2}</strong> — ${info.total} TD${info.total>1?'s':''}</span>
-                ${breakdown ? `<span class="line small">[${breakdown}]</span>` : ''}
-              </span></li>`;
-          });
+        // Store normalized items for UI controls
+        currentItems = [...byPlayer.values()];
+        renderList();
 
-        list.innerHTML = rows.join('') || '<li>No TDs recorded yet.</li>';
         status.textContent = '';
         stamp.textContent = `Last fetched: ${new Date().toLocaleString()}`;
 
@@ -268,23 +356,44 @@
       }
     }
 
+    // Controls: re-render without refetch
+    teamFilterEl.addEventListener('change', renderList);
+    sortModeEl.addEventListener('change', renderList);
+
     // ---- init: detect current week + year, then render tabs & load ----------
     try {
       const sbNow = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard').then(r => r.json());
-      currentSeasonYear = sbNow?.season?.year || new Date().getFullYear();
+      const seasonYear = sbNow?.season?.year || new Date().getFullYear();
+      currentSeasonYear = seasonYear;
       currentSeasonType = sbNow?.season?.type || 2;
       currentWeek = sbNow?.week?.number || 1;
 
-      // Use current regular-season week as the default active
+      // Use current regular-season week as default active
       activeSeasonType = 2;
       activeWeek = (currentSeasonType === 2 && currentWeek) ? currentWeek : currentWeek || 1;
 
       // Build regular-season week tabs
-      renderTabs(currentWeek);
-
-      // Mark active tab
-      const buttons = tabsEl.querySelectorAll('.tab');
-      if (buttons[activeWeek - 1]) buttons[activeWeek - 1].classList.add('active');
+      (function renderTabsInit() {
+        tabsEl.innerHTML = '';
+        for (let w = 1; w <= TOTAL_REG_WEEKS; w++) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'tab' + (w === activeWeek ? ' active' : '');
+          btn.textContent = `Week ${w}`;
+          btn.setAttribute('aria-pressed', String(w === activeWeek));
+          btn.addEventListener('click', () => {
+            if (activeWeek === w) return;
+            activeSeasonType = 2;
+            activeWeek = w;
+            teamFilterEl.value = '';
+            sortModeEl.value = 'td';
+            loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
+            for (const n of tabsEl.querySelectorAll('.tab')) n.classList.remove('active');
+            btn.classList.add('active');
+          });
+          tabsEl.appendChild(btn);
+        }
+      })();
 
       // Initial load
       await loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
