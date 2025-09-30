@@ -8,6 +8,7 @@
     :root { --text:#111; --muted:#666; --rule:#eee; --accent:#0d6efd; --bg:#fff; }
     body { font:16px system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:2rem; color:var(--text); background:var(--bg); }
     h1 { margin:.25rem 0 .5rem }
+    h2 { margin:1.25rem 0 .5rem; font-size:1.1em }
     #stamp { color:var(--muted); margin-bottom:.5rem }
     .small { color:var(--muted); font-size:.9em }
     ul { list-style:none; padding:0; margin:0 }
@@ -37,13 +38,29 @@
     #controls select {
       padding:6px 8px; border:1px solid var(--rule); border-radius:6px; font-size:.95em; background:#fff;
     }
+    .hidden { display:none !important; }
 
-    #auto-note, #title, #stamp, #status, #list { max-width:860px; }
+    /* Section widths */
+    #auto-note, #title, #stamp, #status, #list, #gamesWrap { max-width:860px; }
     #auto-note { margin-top:-.25rem; margin-bottom:.75rem; color:var(--muted); font-size:.9em; }
+
+    /* Matchup accordion */
+    details.game { border:1px solid var(--rule); border-radius:10px; padding:.25rem .75rem; background:#fff; }
+    details.game + details.game { margin-top:.5rem; }
+    summary.game-head { display:flex; align-items:center; gap:.5rem; cursor:pointer; padding:.4rem 0; list-style:none; }
+    .game-meta { display:flex; align-items:center; gap:.5rem; }
+    .game-logo { width:22px; height:22px; object-fit:contain; }
+    .game-vs { color:var(--muted); font-weight:600; }
+    .teams-wrap { display:grid; grid-template-columns: 1fr 1fr; gap:16px; padding:.5rem 0 .75rem; }
+    .team-col h3 { margin:.25rem 0 .25rem; font-size:1em; }
+    .team-col ul { border-top:1px solid var(--rule); margin-top:.25rem; }
+    .team-col li { border-bottom:1px solid var(--rule); padding:.35rem 0; }
+    .pill { display:inline-block; padding:.1rem .4rem; border:1px solid var(--rule); border-radius:999px; font-size:.8em; color:var(--muted); margin-left:.35rem; }
 
     /* Responsive: side banner becomes top banner on narrow screens */
     @media (max-width:1100px) {
       #side-banner { position: static; max-width: 100%; margin-bottom:12px; }
+      .teams-wrap { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -59,24 +76,41 @@
   <div id="auto-note" class="small"></div>
 
   <div id="controls">
+    <label for="viewMode">View:</label>
+    <select id="viewMode">
+      <option value="players">Players (list)</option>
+      <option value="matchups">By matchup (accordion)</option>
+    </select>
+
     <label for="weekSelect">Week:</label>
     <select id="weekSelect"></select>
 
-    <label for="teamFilter">Team:</label>
-    <select id="teamFilter">
-      <option value="">All teams</option>
-    </select>
+    <!-- These two controls show ONLY for Players view -->
+    <span id="controlsPlayers">
+      <label for="teamFilter">Team:</label>
+      <select id="teamFilter">
+        <option value="">All teams</option>
+      </select>
 
-    <label for="sortMode">Sort:</label>
-    <select id="sortMode">
-      <option value="td">Most TDs</option>
-      <option value="name">A–Z by player</option>
-    </select>
+      <label for="sortMode">Sort:</label>
+      <select id="sortMode">
+        <option value="td">Most TDs</option>
+        <option value="name">A–Z by player</option>
+      </select>
+    </span>
   </div>
 
   <div id="stamp" class="small"></div>
   <div id="status">Loading…</div>
+
+  <!-- Players view -->
   <ul id="list"></ul>
+
+  <!-- Matchups view -->
+  <div id="gamesWrap" hidden>
+    <h2>By Matchup (expand to view)</h2>
+    <div id="games"></div>
+  </div>
 
   <script>
   (async function () {
@@ -88,6 +122,10 @@
     const teamFilterEl = document.getElementById('teamFilter');
     const sortModeEl   = document.getElementById('sortMode');
     const weekSelectEl = document.getElementById('weekSelect');
+    const gamesWrapEl  = document.getElementById('gamesWrap');
+    const gamesEl      = document.getElementById('games');
+    const viewModeEl   = document.getElementById('viewMode');
+    const controlsPlayers = document.getElementById('controlsPlayers');
 
     const TOTAL_REG_WEEKS = 18; // NFL regular season
     let currentSeasonYear = null;
@@ -100,6 +138,7 @@
 
     // Data for current render
     let currentItems = []; // array of { label,name,abbr,logo,total,byType }
+    let currentGames = []; // per-game structures for accordion
 
     // ----------------- helpers -----------------
     function tdCategory(p) {
@@ -128,11 +167,8 @@
     }
 
     function setAutoNote() {
-      if (activeSeasonType === 2 && activeWeek === currentWeek) {
-        autoNote.textContent = 'Auto-refreshing current week every 2 minutes.';
-      } else {
-        autoNote.textContent = 'Viewing historical week (auto-refresh paused).';
-      }
+      if (activeSeasonType === 2 && activeWeek === currentWeek) autoNote.textContent = 'Auto-refreshing current week every 2 minutes.';
+      else autoNote.textContent = 'Viewing historical week (auto-refresh paused).';
     }
 
     function startAutoRefresh() {
@@ -142,9 +178,7 @@
       }
       setAutoNote();
     }
-    function stopAutoRefresh() {
-      if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-    }
+    function stopAutoRefresh() { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } }
 
     async function getScoreboard(seasonType, weekNum, year) {
       const url = new URL('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
@@ -177,13 +211,14 @@
       if (abbrs.includes(currentValue)) teamFilterEl.value = currentValue; else teamFilterEl.value = '';
     }
 
-    function renderList() {
+    function renderPlayersList() {
       const team = teamFilterEl.value;
       const sort = sortModeEl.value; // 'td' or 'name'
       let rows = currentItems.slice();
       if (team) rows = rows.filter(r => r.abbr === team);
       if (sort === 'name') rows.sort((a,b) => a.name.localeCompare(b.name, 'en', {sensitivity:'base'}));
       else rows.sort((a,b) => b.total - a.total || a.name.localeCompare(b.name));
+
       list.innerHTML = rows.map(info => {
         const breakdown = Object.entries(info.byType)
           .sort((a,b)=> b[1]-a[1])
@@ -198,23 +233,85 @@
       }).join('') || '<li>No TDs recorded yet.</li>';
     }
 
+    function renderMatchups() {
+      gamesWrapEl.hidden = false;
+      gamesEl.innerHTML = currentGames.map(g => {
+        const teamBlock = (side) => {
+          const tm = g[side];
+          const players = Object.values(tm.players)
+            .sort((a,b)=> b.total - a.total || a.name.localeCompare(b.name));
+          const items = players.map(p => {
+            const pills = Object.entries(p.byType)
+              .sort((a,b)=> b[1]-a[1])
+              .map(([k,v]) => `<span class="pill">${k.replace(' Return',' Ret')}: ${v}</span>`).join(' ');
+            return `<li><strong>${p.name}</strong> — ${p.total} TD${p.total>1?'s':''} ${pills}</li>`;
+          }).join('') || '<li class="small" style="padding:.35rem 0;">No TDs</li>';
+          return `
+            <div class="team-col">
+              <h3><img class="game-logo" src="${tm.logo || ''}" alt="${tm.abbr} logo"> ${tm.abbr}</h3>
+              <ul>${items}</ul>
+            </div>`;
+        };
+
+        const head = `
+          <summary class="game-head">
+            <span class="game-meta">
+              <img class="game-logo" src="${g.away.logo || ''}" alt="${g.away.abbr} logo">
+              <strong>${g.away.abbr}</strong>
+              <span class="game-vs">@</span>
+              <strong>${g.home.abbr}</strong>
+              <img class="game-logo" src="${g.home.logo || ''}" alt="${g.home.abbr} logo">
+            </span>
+            <span class="small" style="margin-left:.5rem">${g.label || ''}</span>
+          </summary>`;
+
+        return `<details class="game">
+          ${head}
+          <div class="teams-wrap">
+            ${teamBlock('away')}
+            ${teamBlock('home')}
+          </div>
+        </details>`;
+      }).join('');
+    }
+
+    function updateViewVisibility() {
+      const mode = viewModeEl.value; // 'players' or 'matchups'
+
+      // Show/hide sections
+      const playersMode = (mode === 'players');
+      list.hidden = !playersMode;
+      gamesWrapEl.hidden = playersMode ? true : false;
+
+      // Show/hide and enable/disable Players-only controls
+      controlsPlayers.classList.toggle('hidden', !playersMode);
+      for (const el of controlsPlayers.querySelectorAll('select')) {
+        el.disabled = !playersMode;
+      }
+    }
+
     async function loadWeek(seasonType, weekNum, year) {
       try {
         status.textContent = 'Loading…';
         list.innerHTML = '';
+        gamesEl.innerHTML = '';
 
         const sb = await getScoreboard(seasonType, weekNum, year);
         const wk = sb?.week?.number || weekNum;
         const st = sb?.season?.type || seasonType;
         setTitle(st, wk);
 
-        // Build team metadata and filter set
+        // Build team/game metadata and team set
+        const events = Array.isArray(sb.events) ? sb.events : [];
         const teamMetaById = new Map();
         const teamMetaByAbbr = new Map();
         const teamSet = new Set();
-        const events = Array.isArray(sb.events) ? sb.events : [];
+        const gameMeta = new Map(); // eventId -> {home:{abbr,logo}, away:{abbr,logo}, label}
+
         for (const ev of events) {
-          const comps = ev?.competitions?.[0]?.competitors || [];
+          const comp = ev?.competitions?.[0];
+          const comps = comp?.competitors || [];
+          let home = null, away = null;
           for (const c of comps) {
             const t = c?.team; if (!t) continue;
             const id = t.id, abbr = t.abbreviation;
@@ -224,27 +321,55 @@
               if (!teamMetaByAbbr.has(abbr)) teamMetaByAbbr.set(abbr, { abbr, logo });
               teamSet.add(abbr);
             }
+            const side = (c?.homeAway || '').toLowerCase();
+            if (side === 'home') home = { abbr, logo };
+            if (side === 'away') away = { abbr, logo };
           }
+          const label = ev?.name || '';
+          if (home && away) gameMeta.set(ev.id, { home, away, label });
         }
+
         populateTeamFilterFromSet(teamSet);
 
         if (!events.length) {
           status.textContent = 'No games found for this week.';
-          list.innerHTML = '';
-          currentItems = [];
+          currentItems = []; currentGames = [];
+          renderPlayersList(); renderMatchups(); updateViewVisibility();
           return;
         }
 
-        // Summaries -> TD aggregation
-        const byPlayer = new Map(); // key -> { total, byType, logo, abbr, name, label }
+        // Aggregate (global + per-game)
+        const byPlayer = new Map(); // key -> { total, byType:{}, logo, abbr, name, label }
+        const games = new Map();    // eventId -> { home:{abbr,logo,players:{}}, away:{...}, label }
         const seenPlays = new Set();
 
-        function ensureRow(name, abbr, logoUrl) {
+        function ensureGlobalRow(name, abbr, logoUrl) {
           const label = `${name} (${abbr})`;
           if (!byPlayer.has(label)) byPlayer.set(label, {
             total: 0, byType: {}, logo: logoUrl || '', abbr, name, label
           });
           return byPlayer.get(label);
+        }
+
+        function ensureGame(eventId) {
+          if (!games.has(eventId)) {
+            const meta = gameMeta.get(eventId) || { home:{abbr:'HOME',logo:''}, away:{abbr:'AWAY',logo:''}, label:'' };
+            games.set(eventId, {
+              home: { abbr: meta.home.abbr, logo: meta.home.logo, players: {} },
+              away: { abbr: meta.away.abbr, logo: meta.away.logo, players: {} },
+              label: meta.label
+            });
+          }
+          return games.get(eventId);
+        }
+
+        function bumpGamePlayer(g, teamAbbr, name, cat) {
+          const side = (teamAbbr === g.home.abbr) ? 'home' : (teamAbbr === g.away.abbr ? 'away' : null);
+          if (!side) return;
+          const bucket = g[side].players;
+          if (!bucket[name]) bucket[name] = { name, total:0, byType:{} };
+          bucket[name].total += 1;
+          bucket[name].byType[cat] = (bucket[name].byType[cat] || 0) + 1;
         }
 
         async function processEvent(ev) {
@@ -262,7 +387,8 @@
                       || /\btd\b|touchdown/.test((p.text || '').toLowerCase());
             if (!isTD) continue;
 
-            const teamId = p.team?.id, teamAbbr = p.team?.abbreviation || '';
+            const teamAbbr = p.team?.abbreviation || '';
+            const teamId = p.team?.id;
             const meta = (teamId && teamMetaById.get(teamId)) || teamMetaByAbbr.get(teamAbbr) || { abbr: teamAbbr, logo: '' };
             const cat = tdCategory(p);
 
@@ -271,31 +397,41 @@
               x && x.type && /scorer|rush|receive|return|interception|fumble/i.test(x.type.text || '')
             );
 
-            let row;
-            if (primary?.athlete?.displayName) {
-              row = ensureRow(primary.athlete.displayName, meta.abbr || teamAbbr, meta.logo);
-            } else {
-              const m = /([A-Z][\w.\-'\s]+)\s+\d+\s*(yd|yard)/i.exec(p.text || '');
-              const name = m ? m[1].trim() : 'Unknown';
-              row = ensureRow(name, meta.abbr || teamAbbr, meta.logo);
-            }
+            const name = primary?.athlete?.displayName
+              || ((/([A-Z][\w.\-'\s]+)\s+\d+\s*(yd|yard)/i.exec(p.text || '') || [])[1] || 'Unknown').trim();
+
+            // Global
+            const row = ensureGlobalRow(name, meta.abbr || teamAbbr, meta.logo);
             row.total += 1;
             row.byType[cat] = (row.byType[cat] || 0) + 1;
+
+            // Game
+            const g = ensureGame(id);
+            bumpGamePlayer(g, meta.abbr || teamAbbr, name, cat);
           }
         }
 
+        // Process all events with gentle concurrency
         for (let i = 0; i < events.length; i += 6) {
           await Promise.all(events.slice(i, i + 6).map(processEvent));
         }
 
+        // Store + render
         currentItems = [...byPlayer.values()];
-        renderList();
+        renderPlayersList();
+
+        currentGames = events.map(ev => games.get(ev.id)).filter(Boolean);
+        // Only render matchups section if user chooses it
+        if (viewModeEl.value === 'matchups') renderMatchups();
 
         status.textContent = '';
         stamp.textContent = `Last fetched: ${new Date().toLocaleString()}`;
 
         // auto-refresh rule
         startAutoRefresh();
+
+        // Ensure correct visibility for current view
+        updateViewVisibility();
       } catch (err) {
         console.error(err);
         status.textContent = 'Could not load TD scorers.';
@@ -321,15 +457,24 @@
       weekSelectEl.addEventListener('change', () => {
         activeSeasonType = 2; // dropdown covers regular season
         activeWeek = parseInt(weekSelectEl.value, 10);
-        // reset controls for predictability
+        // Reset players-only controls to defaults
         teamFilterEl.value = '';
         sortModeEl.value = 'td';
         loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
       });
 
-      // Local controls: re-render without refetching
-      teamFilterEl.addEventListener('change', renderList);
-      sortModeEl.addEventListener('change', renderList);
+      // View mode toggle (show/hide players-only controls and sections)
+      viewModeEl.addEventListener('change', () => {
+        updateViewVisibility();
+        // If switching to matchups for the first time in this load, ensure it's rendered
+        if (viewModeEl.value === 'matchups' && gamesEl.innerHTML.trim() === '') {
+          renderMatchups();
+        }
+      });
+
+      // Local controls: re-render players list without refetch
+      teamFilterEl.addEventListener('change', renderPlayersList);
+      sortModeEl.addEventListener('change', renderPlayersList);
 
       // Initial load
       await loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
