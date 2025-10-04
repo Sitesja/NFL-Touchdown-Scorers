@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>NFL — TD Scorers</title>
+  <title>Justin’s Sports — NFL, MLB, NBA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { --text:#111; --muted:#666; --rule:#eee; --accent:#0d6efd; --bg:#fff; }
@@ -20,7 +20,7 @@
 
     /* Right-side floating banner */
     #side-banner {
-      position: fixed; top: 24px; right: 24px; max-width: 280px;
+      position: fixed; top: 24px; right: 24px; max-width: 360px;
       background:#f0f8ff; border:2px solid var(--accent); border-radius:12px;
       padding:12px 14px; box-shadow:0 8px 24px rgba(0,0,0,.12); z-index:999;
       font-weight:600; line-height:1.3;
@@ -28,20 +28,33 @@
 
     #attrib {
       background:#f6f6f6; border:1px solid var(--rule); padding:8px 12px; border-radius:8px;
-      font-size:.9em; color:var(--muted); margin-bottom:12px; max-width:860px;
+      font-size:.9em; color:var(--muted); margin-bottom:12px; max-width:960px;
     }
-    #attrib a { color:inherit; text-decoration:underline; }
 
     /* Controls */
-    #controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:.25rem 0 1rem; max-width:860px; }
+    #controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:.25rem 0 1rem; max-width:960px; }
     #controls label { font-size:.9em; color:var(--muted); }
     #controls select {
       padding:6px 8px; border:1px solid var(--rule); border-radius:6px; font-size:.95em; background:#fff;
     }
     .hidden { display:none !important; }
 
+    /* Leaders ribbon */
+    #leadersWrap { max-width: 960px; margin: 0 0 12px; }
+    #leadersWrap h2 { margin: .75rem 0 .5rem; font-size: 1.1em; }
+    #leaders { display:flex; flex-wrap:wrap; gap:10px; }
+    .leader-card {
+      display:flex; align-items:center; gap:10px;
+      border:1px solid var(--rule); border-radius:10px; padding:8px 10px; background:#fff;
+      min-width:250px;
+    }
+    .leader-logo { width:32px; height:32px; object-fit:contain; flex:0 0 32px; }
+    .leader-main { display:flex; flex-direction:column; line-height:1.15; }
+    .leader-name { font-weight:700; }
+    .leader-sub { font-size:.9em; color:var(--muted); }
+
     /* Section widths */
-    #auto-note, #title, #stamp, #status, #list, #gamesWrap { max-width:860px; }
+    #auto-note, #title, #stamp, #status, #list, #gamesWrap { max-width:960px; }
     #auto-note { margin-top:-.25rem; margin-bottom:.75rem; color:var(--muted); font-size:.9em; }
 
     /* Matchup accordion */
@@ -51,6 +64,8 @@
     .game-meta { display:flex; align-items:center; gap:.5rem; }
     .game-logo { width:22px; height:22px; object-fit:contain; }
     .game-vs { color:var(--muted); font-weight:600; }
+    .score { font-weight:700; margin-left:.5rem; }
+    .statusNote { color:var(--muted); font-size:.9em; margin-left:.5rem; }
     .teams-wrap { display:grid; grid-template-columns: 1fr 1fr; gap:16px; padding:.5rem 0 .75rem; }
     .team-col h3 { margin:.25rem 0 .25rem; font-size:1em; }
     .team-col ul { border-top:1px solid var(--rule); margin-top:.25rem; }
@@ -66,26 +81,62 @@
 </head>
 <body>
   <!-- Sticky / floating banner -->
-  <aside id="side-banner" role="complementary" aria-label="Site message">
-    🏈 Thanks for using Justin's TD tracker. Go Patriots.
+  <aside id="side-banner">
+    I hope you enjoy this project — a one-stop hub for consolidated sports data, presented simply for bettors and fantasy players.
   </aside>
 
   <div id="attrib">Data source: ESPN public score APIs (unofficial/open endpoints).</div>
 
-  <h1 id="title">TD Scorers — Current Week</h1>
+  <h1 id="title">Scorers — Current</h1>
   <div id="auto-note" class="small"></div>
 
   <div id="controls">
+    <label for="sportSelect">Sport:</label>
+    <select id="sportSelect">
+      <option value="nfl">NFL</option>
+      <option value="mlb">MLB</option>
+      <option value="nba">NBA</option>
+    </select>
+
     <label for="viewMode">View:</label>
     <select id="viewMode">
       <option value="players">Players (list)</option>
       <option value="matchups">By matchup (accordion)</option>
     </select>
 
-    <label for="weekSelect">Week:</label>
-    <select id="weekSelect"></select>
+    <!-- NFL only -->
+    <span id="controlsNFL">
+      <label for="weekSelect">Week:</label>
+      <select id="weekSelect"></select>
+    </span>
 
-    <!-- These two controls show ONLY for Players view -->
+    <!-- MLB only: stat selector -->
+    <span id="controlsMLB" class="hidden">
+      <label for="mlbStat">MLB Stat:</label>
+      <select id="mlbStat">
+        <option value="tb">Total Bases</option>
+        <option value="rbi">RBIs</option>
+        <option value="r">Runs</option>
+        <option value="h">Hits</option>
+        <option value="hr">Home Runs</option>
+      </select>
+    </span>
+
+    <!-- NBA only: stat + date selector for matchups -->
+    <span id="controlsNBA" class="hidden">
+      <label for="nbaStat">NBA Stat:</label>
+      <select id="nbaStat">
+        <option value="pts">Points</option>
+        <option value="reb">Rebounds</option>
+        <option value="ast">Assists</option>
+        <option value="3pm">3-Pointers Made</option>
+      </select>
+
+      <label for="nbaDate">Date (matchups):</label>
+      <select id="nbaDate"></select>
+    </span>
+
+    <!-- Players-only controls (all sports) -->
     <span id="controlsPlayers">
       <label for="teamFilter">Team:</label>
       <select id="teamFilter">
@@ -94,10 +145,16 @@
 
       <label for="sortMode">Sort:</label>
       <select id="sortMode">
-        <option value="td">Most TDs</option>
+        <option value="stat">By selected stat</option>
         <option value="name">A–Z by player</option>
       </select>
     </span>
+  </div>
+
+  <!-- Leaders ribbon -->
+  <div id="leadersWrap" hidden>
+    <h2>Leaders (Top 5)</h2>
+    <div id="leaders"></div>
   </div>
 
   <div id="stamp" class="small"></div>
@@ -119,32 +176,183 @@
     const list    = document.getElementById('list');
     const stamp   = document.getElementById('stamp');
     const autoNote= document.getElementById('auto-note');
-    const teamFilterEl = document.getElementById('teamFilter');
-    const sortModeEl   = document.getElementById('sortMode');
-    const weekSelectEl = document.getElementById('weekSelect');
-    const gamesWrapEl  = document.getElementById('gamesWrap');
-    const gamesEl      = document.getElementById('games');
-    const viewModeEl   = document.getElementById('viewMode');
-    const controlsPlayers = document.getElementById('controlsPlayers');
+
+    const sportSelectEl  = document.getElementById('sportSelect');
+    const viewModeEl     = document.getElementById('viewMode');
+    const weekSelectEl   = document.getElementById('weekSelect');
+    const controlsNFL    = document.getElementById('controlsNFL');
+    const controlsMLB    = document.getElementById('controlsMLB');
+    const controlsNBA    = document.getElementById('controlsNBA');
+    const controlsPlayers= document.getElementById('controlsPlayers');
+    const nbaDateEl      = document.getElementById('nbaDate');
+
+    const teamFilterEl   = document.getElementById('teamFilter');
+    const sortModeEl     = document.getElementById('sortMode');
+    const mlbStatEl      = document.getElementById('mlbStat');
+    const nbaStatEl      = document.getElementById('nbaStat');
+
+    const gamesWrapEl    = document.getElementById('gamesWrap');
+    const gamesEl        = document.getElementById('games');
+
+    const leadersWrapEl  = document.getElementById('leadersWrap');
+    const leadersEl      = document.getElementById('leaders');
 
     const TOTAL_REG_WEEKS = 18; // NFL regular season
-    let currentSeasonYear = null;
-    let currentSeasonType = 2; // 1=Pre, 2=Reg, 3=Post
-    let currentWeek = null;
 
-    let activeSeasonType = 2; // Regular season for the dropdown
-    let activeWeek = null;
+    // App state
+    let sport = 'nfl';              // 'nfl' | 'mlb' | 'nba'
+    let currentSeasonYear = null;   // NFL season year
+    let currentSeasonType = 2;      // NFL: 1=Pre,2=Reg,3=Post
+    let currentWeek = null;         // NFL current week
+    let activeWeek = null;          // NFL selected week
     let refreshTimer = null;
 
+    // NBA window (always last 7 days aggregated for Players; specific day for Matchups)
+    let nbaDates = [];  // array of {label, yyyymmdd}
+    let nbaSelectedDate = null; // yyyymmdd for matchups
+
     // Data for current render
-    let currentItems = []; // array of { label,name,abbr,logo,total,byType }
+    let currentItems = []; // array of { label,name,abbr,logo,statValue, byType | mlb | nba }
     let currentGames = []; // per-game structures for accordion
 
-    // ----------------- helpers -----------------
-    function tdCategory(p) {
+    // ---------- endpoint helpers ----------
+    const urls = {
+      nfl: {
+        scoreboard: (opts={}) => {
+          const u = new URL('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+          if (opts.seasontype) u.searchParams.set('seasontype', String(opts.seasontype));
+          if (opts.week)       u.searchParams.set('week', String(opts.week));
+          if (opts.year)       u.searchParams.set('year', String(opts.year));
+          return u.toString();
+        },
+        summary: (eventId) =>
+          `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`
+      },
+      mlb: {
+        scoreboard: () => 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard',
+        summary: (eventId) =>
+          `https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary?event=${eventId}`
+      },
+      nba: {
+        scoreboard: (yyyymmdd) => {
+          const u = new URL('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard');
+          if (yyyymmdd) u.searchParams.set('dates', yyyymmdd);
+          return u.toString();
+        },
+        summary: (eventId) =>
+          `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=${eventId}`
+      }
+    };
+
+    // ---------- utilities ----------
+    const fmt = {
+      yyyymmdd(d) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth()+1).padStart(2,'0');
+        const day = String(d.getDate()).padStart(2,'0');
+        return `${y}${m}${day}`;
+      },
+      niceDate(d) {
+        return d.toLocaleDateString(undefined, {weekday:'short', month:'short', day:'numeric'});
+      }
+    };
+
+    // ---------- labels ----------
+    function statLabelShortMLB(code){ return {tb:'TB', rbi:'RBI', r:'R', h:'H', hr:'HR'}[code] || 'Stat'; }
+    function statLabelLongMLB(code){  return {tb:'Total Bases', rbi:'RBIs', r:'Runs', h:'Hits', hr:'Home Runs'}[code] || 'Stat'; }
+    function statLabelShortNBA(code){ return {pts:'PTS', reb:'REB', ast:'AST', '3pm':'3PM'}[code] || 'Stat'; }
+    function statLabelLongNBA(code){  return {pts:'Points', reb:'Rebounds', ast:'Assists', '3pm':'3-Pointers Made'}[code] || 'Stat'; }
+
+    function labelShortForSport() {
+      if (sport === 'nfl') return 'TD';
+      if (sport === 'mlb') return statLabelShortMLB(mlbStatEl.value);
+      return statLabelShortNBA(nbaStatEl.value);
+    }
+
+    function buildBreakdownLine(row) {
+      if (sport === 'nfl') {
+        return Object.entries(row.byType || {})
+          .sort((a,b)=>b[1]-a[1])
+          .map(([k,v]) => `${k.replace(' Return',' Ret')}: ${v}`)
+          .join(' • ');
+      }
+      if (sport === 'mlb') {
+        const s = row.mlb || {h:0,r:0,rbi:0,tb:0,hr:0};
+        return `TB ${s.tb} • RBI ${s.rbi} • R ${s.r} • H ${s.h} • HR ${s.hr}`;
+      }
+      const s = row.nba || {pts:0,reb:0,ast:0,tpm:0};
+      return `PTS ${s.pts} • REB ${s.reb} • AST ${s.ast} • 3PM ${s.tpm}`;
+    }
+
+    function setTitleForContext() {
+      if (sport === 'nfl') {
+        const label = (activeWeek ? `Week ${activeWeek} of ${TOTAL_REG_WEEKS}` : 'Current Week');
+        titleEl.textContent = `NFL — ${viewModeEl.value === 'players' ? 'TD Scorers' : 'Matchups'} — ${label}`;
+      } else if (sport === 'mlb') {
+        const statName = statLabelLongMLB(mlbStatEl.value);
+        titleEl.textContent = `MLB — ${viewModeEl.value === 'players' ? `${statName} Leaders (Today)` : `Matchups — ${statName} (Today)`}`;
+      } else {
+        const statName = statLabelLongNBA(nbaStatEl.value);
+        if (viewModeEl.value === 'players') {
+          titleEl.textContent = `NBA — ${statName} Leaders — Last 7 Days`;
+        } else {
+          const sel = nbaDates.find(x => x.value === nbaSelectedDate);
+          titleEl.textContent = `NBA — Matchups (${statName}) — ${sel ? sel.label : ''}`;
+        }
+      }
+    }
+
+    function setAutoNote() {
+      if (sport === 'nfl') {
+        autoNote.textContent = (activeWeek === currentWeek)
+          ? 'Auto-refreshing current NFL week every 2 minutes.'
+          : 'Viewing historical NFL week (auto-refresh paused).';
+      } else if (sport === 'mlb') {
+        autoNote.textContent = 'Auto-refreshing today’s MLB games every 2 minutes.';
+      } else {
+        autoNote.textContent = 'NBA Players: last 7 days aggregated (refreshing every 2 minutes). NBA Matchups: shows a chosen day (last 7).';
+      }
+    }
+
+    function startAutoRefresh() {
+      stopAutoRefresh();
+      if (sport === 'nfl') {
+        if (activeWeek === currentWeek) refreshTimer = setInterval(() => loadData(), 120000);
+      } else {
+        refreshTimer = setInterval(() => loadData(), 120000);
+      }
+      setAutoNote();
+    }
+    function stopAutoRefresh() { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } }
+
+    function populateWeekDropdown(currWeek) {
+      weekSelectEl.innerHTML = '';
+      for (let w = 1; w <= TOTAL_REG_WEEKS; w++) {
+        const opt = document.createElement('option');
+        opt.value = String(w);
+        opt.textContent = `Week ${w}`;
+        if (w === currWeek) opt.selected = true;
+        weekSelectEl.appendChild(opt);
+      }
+    }
+
+    // Build last 7 days list for NBA (today..today-6)
+    function buildNBADates() {
+      nbaDates = [];
+      const today = new Date();
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(today); d.setDate(today.getDate() - i);
+        nbaDates.push({ value: fmt.yyyymmdd(d), label: fmt.niceDate(d) });
+      }
+      nbaSelectedDate = nbaDates[0].value;
+      nbaDateEl.innerHTML = nbaDates.map(d => `<option value="${d.value}">${d.label}</option>`).join('');
+    }
+
+    // ---------- sport-specific extractors ----------
+    function tdCategoryNFL(p) {
       const txt = (p.text || '').toLowerCase();
       const players = Array.isArray(p.players) ? p.players : [];
-      const types = players.map(x => (x && x.type && x.type.text ? x.type.text.toLowerCase() : '')).join(' ');
+      const types = players.map(x => (x?.type?.text || '').toLowerCase()).join(' ');
       if (/receive|reception|receiver/.test(types)) return 'Receiving';
       if (/rush|rusher|run/.test(types)) return 'Rushing';
       if (/kickoff return|punt return|returner/.test(types)) return 'Return';
@@ -158,100 +366,166 @@
       return 'TD';
     }
 
-    function setTitle(seasonType, weekNum) {
-      let label = 'Current Week';
-      if (seasonType === 2 && weekNum) label = `Week ${weekNum} of ${TOTAL_REG_WEEKS}`;
-      else if (seasonType === 1 && weekNum) label = `Preseason Week ${weekNum}`;
-      else if (seasonType === 3 && weekNum) label = `Postseason Week ${weekNum}`;
-      titleEl.textContent = `TD Scorers — ${label}`;
-    }
-
-    function setAutoNote() {
-      if (activeSeasonType === 2 && activeWeek === currentWeek) autoNote.textContent = 'Auto-refreshing current week every 2 minutes.';
-      else autoNote.textContent = 'Viewing historical week (auto-refresh paused).';
-    }
-
-    function startAutoRefresh() {
-      stopAutoRefresh();
-      if (activeSeasonType === 2 && activeWeek === currentWeek) {
-        refreshTimer = setInterval(() => loadWeek(activeSeasonType, activeWeek, currentSeasonYear), 120000);
+    // MLB: extract hitters from boxscore
+    function extractMLBHittersFromBoxscore(summaryJson) {
+      const out = {};
+      const box = summaryJson?.boxscore;
+      if (!box) return out;
+      const blocks = Array.isArray(box.players) ? box.players : [];
+      for (const block of blocks) {
+        const teamAbbr = block?.team?.abbreviation || '';
+        const statGroups = Array.isArray(block?.statistics) ? block.statistics : [];
+        const batting = statGroups.find(g =>
+          /batting/i.test(g?.name || '') ||
+          (Array.isArray(g?.labels) && g.labels.some(l => /H|RBI|TB|AB|R|HR/.test(l)))
+        );
+        if (!batting) continue;
+        const athletes = Array.isArray(batting.athletes) ? batting.athletes : [];
+        for (const a of athletes) {
+          const name = a?.athlete?.displayName || a?.athlete?.shortName; if (!name) continue;
+          let h=0,r=0,rbi=0,tb=0,hr=0;
+          const map = a?.statsMap || a?.statisticsMap;
+          if (map) {
+            h   = parseInt(map.H ?? map.h ?? 0,10)||0;
+            r   = parseInt(map.R ?? map.r ?? 0,10)||0;
+            rbi = parseInt(map.RBI ?? map.rbi ?? 0,10)||0;
+            tb  = parseInt(map.TB ?? map.tb ?? 0,10)||0;
+            hr  = parseInt(map.HR ?? map.hr ?? 0,10)||0;
+          }
+          const labels = batting.labels || a.labels;
+          const stats  = a.stats;
+          if (Array.isArray(labels) && Array.isArray(stats) && labels.length===stats.length) {
+            for (let i=0;i<labels.length;i++) {
+              const key = (labels[i]||'').toUpperCase();
+              const val = parseInt(String(stats[i]||'').trim(),10);
+              if (!Number.isFinite(val)) continue;
+              if (key==='H') h=val; else if (key==='R') r=val; else if (key==='RBI') rbi=val; else if (key==='TB') tb=val; else if (key==='HR') hr=val;
+            }
+          }
+          if (!tb && hr>0) tb = 4*hr;
+          if (h||r||rbi||tb||hr) {
+            if (!out[name]) out[name]={h:0,r:0,rbi:0,tb:0,hr:0,teamAbbr};
+            out[name].h+=h; out[name].r+=r; out[name].rbi+=rbi; out[name].tb+=tb; out[name].hr+=hr; out[name].teamAbbr=teamAbbr;
+          }
+        }
       }
-      setAutoNote();
-    }
-    function stopAutoRefresh() { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } }
-
-    async function getScoreboard(seasonType, weekNum, year) {
-      const url = new URL('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
-      if (seasonType) url.searchParams.set('seasontype', String(seasonType));
-      if (weekNum)     url.searchParams.set('week', String(weekNum));
-      if (year)        url.searchParams.set('year', String(year));
-      return fetch(url).then(r => r.json());
+      return out;
     }
 
-    function populateWeekDropdown(currWeek) {
-      weekSelectEl.innerHTML = '';
-      for (let w = 1; w <= TOTAL_REG_WEEKS; w++) {
-        const opt = document.createElement('option');
-        opt.value = String(w);
-        opt.textContent = `Week ${w}`;
-        if (w === currWeek) opt.selected = true;
-        weekSelectEl.appendChild(opt);
+    // NBA: extract players (PTS/REB/AST/3PM) from boxscore
+    function extractNBAPlayersFromBoxscore(summaryJson) {
+      const out = {}; // name -> { pts, reb, ast, tpm, teamAbbr }
+      const box = summaryJson?.boxscore;
+      if (!box) return out;
+      const blocks = Array.isArray(box.players) ? box.players : [];
+      for (const block of blocks) {
+        const teamAbbr = block?.team?.abbreviation || '';
+        const statGroups = Array.isArray(block?.statistics) ? block.statistics : [];
+        const g = statGroups.find(gr =>
+          /stat/i.test(gr?.name || '') ||
+          (Array.isArray(gr?.labels) && gr.labels.some(l => /(PTS|REB|AST|3PT|3PM|FG3M)/i.test(l)))
+        );
+        if (!g) continue;
+        const athletes = Array.isArray(g.athletes) ? g.athletes : [];
+        for (const a of athletes) {
+          const name = a?.athlete?.displayName || a?.athlete?.shortName; if (!name) continue;
+          let pts=0, reb=0, ast=0, tpm=0;
+
+          const labels = Array.isArray(g.labels) ? g.labels : Array.isArray(a.labels) ? a.labels : null;
+          const stats  = Array.isArray(a.stats) ? a.stats : null;
+          if (labels && stats && labels.length===stats.length) {
+            for (let i=0;i<labels.length;i++) {
+              const key = (labels[i]||'').toUpperCase();
+              const valRaw = String(stats[i] ?? '').trim();
+              if (key === 'PTS') { const v=parseInt(valRaw,10); if(Number.isFinite(v)) pts=v; }
+              else if (key === 'REB') { const v=parseInt(valRaw,10); if(Number.isFinite(v)) reb=v; }
+              else if (key === 'AST') { const v=parseInt(valRaw,10); if(Number.isFinite(v)) ast=v; }
+              else if (key === '3PM' || key === 'FG3M') { const v=parseInt(valRaw,10); if(Number.isFinite(v)) tpm=v; }
+              else if (key === '3PT') {
+                const m = /^(\d+)\s*-\s*\d+/.exec(valRaw); if (m) tpm = parseInt(m[1],10) || tpm;
+              }
+            }
+          }
+
+          if (!(pts||reb||ast||tpm) && typeof a?.shortDisplayName === 'string') {
+            const s=a.shortDisplayName;
+            const pt=/(\d+)\s*PTS/i.exec(s); if(pt) pts=parseInt(pt[1],10)||pts;
+            const rb=/(\d+)\s*REB/i.exec(s); if(rb) reb=parseInt(rb[1],10)||reb;
+            const as=/(\d+)\s*AST/i.exec(s); if(as) ast=parseInt(as[1],10)||ast;
+            const th=/(\d+)\s*3P(M)?/i.exec(s); if(th) tpm=parseInt(th[1],10)||tpm;
+          }
+
+          if (pts||reb||ast||tpm) {
+            if (!out[name]) out[name]={pts:0,reb:0,ast:0,tpm:0,teamAbbr};
+            out[name].pts+=pts; out[name].reb+=reb; out[name].ast+=ast; out[name].tpm+=tpm; out[name].teamAbbr=teamAbbr;
+          }
+        }
       }
+      return out;
     }
 
-    function populateTeamFilterFromSet(teamAbbrSet) {
+    // ---------- rendering ----------
+    function setTeamFilterOptions(teamSet) {
       const currentValue = teamFilterEl.value;
       teamFilterEl.innerHTML = '<option value="">All teams</option>';
-      const abbrs = Array.from(teamAbbrSet).sort();
+      const abbrs = Array.from(teamSet).sort();
       for (const ab of abbrs) {
         const opt = document.createElement('option');
         opt.value = ab; opt.textContent = ab;
         teamFilterEl.appendChild(opt);
       }
-      if (abbrs.includes(currentValue)) teamFilterEl.value = currentValue; else teamFilterEl.value = '';
+      teamFilterEl.value = abbrs.includes(currentValue) ? currentValue : '';
     }
 
     function renderPlayersList() {
       const team = teamFilterEl.value;
-      const sort = sortModeEl.value; // 'td' or 'name'
+      const sort = sortModeEl.value; // 'stat' or 'name'
       let rows = currentItems.slice();
       if (team) rows = rows.filter(r => r.abbr === team);
+
       if (sort === 'name') rows.sort((a,b) => a.name.localeCompare(b.name, 'en', {sensitivity:'base'}));
-      else rows.sort((a,b) => b.total - a.total || a.name.localeCompare(b.name));
+      else rows.sort((a,b) => b.statValue - a.statValue || a.name.localeCompare(b.name));
+
+      let labelShort = 'Stat', breakdownBuilder = (info)=>'';
+      if (sport === 'nfl') { labelShort = 'TD'; breakdownBuilder = (info)=>{
+        return Object.entries(info.byType||{}).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k.replace(' Return',' Ret')}: ${v}`).join(', ');
+      }; }
+      else if (sport === 'mlb') { labelShort = statLabelShortMLB(mlbStatEl.value); breakdownBuilder = (info)=>{
+        const s=info.mlb||{h:0,r:0,rbi:0,tb:0,hr:0};
+        return `TB: ${s.tb} • RBI: ${s.rbi} • R: ${s.r} • H: ${s.h} • HR: ${s.hr}`;
+      }; }
+      else { labelShort = statLabelShortNBA(nbaStatEl.value); breakdownBuilder = (info)=>{
+        const s=info.nba||{pts:0,reb:0,ast:0,tpm:0};
+        return `PTS: ${s.pts} • REB: ${s.reb} • AST: ${s.ast} • 3PM: ${s.tpm}`;
+      }; }
 
       list.innerHTML = rows.map(info => {
-        const breakdown = Object.entries(info.byType)
-          .sort((a,b)=> b[1]-a[1])
-          .map(([k,v]) => `${k.replace(' Return',' Ret')}: ${v}`)
-          .join(', ');
-        const logo = info.logo ? `<img class="logo" src="${info.logo}" alt="${info.abbr} logo" loading="lazy">`
-                               : `<span class="logo" aria-hidden="true"></span>`;
+        const logo = info.logo ? `<img class="logo" src="${info.logo}" alt="${info.abbr} logo" loading="lazy">` : `<span class="logo" aria-hidden="true"></span>`;
+        const breakdown = breakdownBuilder(info);
+        const mainVal = info.statValue || 0;
         return `<li>${logo}<span class="row">
-            <span class="line"><strong>${info.label}</strong> — ${info.total} TD${info.total>1?'s':''}</span>
-            ${breakdown ? `<span class="line small">[${breakdown}]</span>` : ''}
-          </span></li>`;
-      }).join('') || '<li>No TDs recorded yet.</li>';
+          <span class="line"><strong>${info.label}</strong> — ${mainVal} ${labelShort}${mainVal===1?'':'s'}</span>
+          ${breakdown ? `<span class="line small">[${breakdown}]</span>` : ''}
+        </span></li>`;
+      }).join('') || '<li>No data yet.</li>';
     }
 
     function renderMatchups() {
       gamesWrapEl.hidden = false;
+
+      const statShort = (sport==='nfl') ? 'TD' : (sport==='mlb' ? statLabelShortMLB(mlbStatEl.value) : statLabelShortNBA(nbaStatEl.value));
+
       gamesEl.innerHTML = currentGames.map(g => {
-        const teamBlock = (side) => {
-          const tm = g[side];
-          const players = Object.values(tm.players)
-            .sort((a,b)=> b.total - a.total || a.name.localeCompare(b.name));
-          const items = players.map(p => {
-            const pills = Object.entries(p.byType)
-              .sort((a,b)=> b[1]-a[1])
-              .map(([k,v]) => `<span class="pill">${k.replace(' Return',' Ret')}: ${v}</span>`).join(' ');
-            return `<li><strong>${p.name}</strong> — ${p.total} TD${p.total>1?'s':''} ${pills}</li>`;
-          }).join('') || '<li class="small" style="padding:.35rem 0;">No TDs</li>';
-          return `
-            <div class="team-col">
-              <h3><img class="game-logo" src="${tm.logo || ''}" alt="${tm.abbr} logo"> ${tm.abbr}</h3>
-              <ul>${items}</ul>
-            </div>`;
-        };
+        const awayScore = (g.away.score ?? '') || '';
+        const homeScore = (g.home.score ?? '') || '';
+        let scoreHtml = '';
+        if (awayScore || homeScore) {
+          const a = Number(awayScore), h = Number(homeScore);
+          const aStr = Number.isFinite(a) && Number.isFinite(h) && a > h ? `<strong>${awayScore}</strong>` : `${awayScore}`;
+          const hStr = Number.isFinite(a) && Number.isFinite(h) && h > a ? `<strong>${homeScore}</strong>` : `${homeScore}`;
+          scoreHtml = `<span class="score">${aStr}–${hStr}</span>`;
+        }
+        const statusNote = g?.statusText ? `<span class="statusNote">${g.statusText}</span>` : '';
 
         const head = `
           <summary class="game-head">
@@ -261,9 +535,43 @@
               <span class="game-vs">@</span>
               <strong>${g.home.abbr}</strong>
               <img class="game-logo" src="${g.home.logo || ''}" alt="${g.home.abbr} logo">
+              ${scoreHtml}
+              ${statusNote}
             </span>
-            <span class="small" style="margin-left:.5rem">${g.label || ''}</span>
           </summary>`;
+
+        const teamBlock = (side) => {
+          const tm = g[side];
+          const playersArr = Object.values(tm.players);
+          playersArr.sort((a,b) => {
+            const av = a.statValue ?? a.total ?? 0;
+            const bv = b.statValue ?? b.total ?? 0;
+            return bv - av || a.name.localeCompare(b.name);
+          });
+
+          const items = playersArr.map(p => {
+            let pills = '';
+            if (sport === 'nfl') {
+              pills = Object.entries(p.byType||{}).sort((a,b)=> b[1]-a[1]).map(([k,v]) => `<span class="pill">${k.replace(' Return',' Ret')}: ${v}</span>`).join(' ');
+              return `<li><strong>${p.name}</strong> — ${p.total} TD${p.total>1?'s':''} ${pills}</li>`;
+            } else if (sport === 'mlb') {
+              const s=p.mlb||{h:0,r:0,rbi:0,tb:0,hr:0};
+              pills = `<span class="pill">TB: ${s.tb}</span> <span class="pill">RBI: ${s.rbi}</span> <span class="pill">R: ${s.r}</span> <span class="pill">H: ${s.h}</span> <span class="pill">HR: ${s.hr}</span>`;
+              const val = p.statValue ?? 0;
+              return `<li><strong>${p.name}</strong> — ${val} ${statShort}${val===1?'':'s'} ${pills}</li>`;
+            } else {
+              const s=p.nba||{pts:0,reb:0,ast:0,tpm:0};
+              pills = `<span class="pill">PTS: ${s.pts}</span> <span class="pill">REB: ${s.reb}</span> <span class="pill">AST: ${s.ast}</span> <span class="pill">3PM: ${s.tpm}</span>`;
+              const val = p.statValue ?? 0;
+              return `<li><strong>${p.name}</strong> — ${val} ${statShort}${val===1?'':'s'} ${pills}</li>`;
+            }
+          }).join('') || '<li class="small" style="padding:.35rem 0;">No players</li>';
+
+          return `<div class="team-col">
+            <h3><img class="game-logo" src="${tm.logo || ''}" alt="${tm.abbr} logo"> ${tm.abbr}</h3>
+            <ul>${items}</ul>
+          </div>`;
+        };
 
         return `<details class="game">
           ${head}
@@ -275,209 +583,301 @@
       }).join('');
     }
 
-    function updateViewVisibility() {
-      const mode = viewModeEl.value; // 'players' or 'matchups'
+    function renderLeaders() {
+      const rows = currentItems
+        .slice()
+        .filter(r => (r.statValue || 0) > 0)
+        .sort((a,b) => (b.statValue - a.statValue) || a.name.localeCompare(b.name))
+        .slice(0, 5);
 
-      // Show/hide sections
-      const playersMode = (mode === 'players');
-      list.hidden = !playersMode;
-      gamesWrapEl.hidden = playersMode ? true : false;
-
-      // Show/hide and enable/disable Players-only controls
-      controlsPlayers.classList.toggle('hidden', !playersMode);
-      for (const el of controlsPlayers.querySelectorAll('select')) {
-        el.disabled = !playersMode;
+      if (!rows.length) {
+        leadersWrapEl.hidden = true;
+        leadersEl.innerHTML = '';
+        return;
       }
+
+      const statShort = labelShortForSport();
+      leadersEl.innerHTML = rows.map(r => {
+        const logo = r.logo ? `<img class="leader-logo" src="${r.logo}" alt="${r.abbr} logo" loading="lazy">`
+                            : `<span class="leader-logo" aria-hidden="true"></span>`;
+        const sub  = buildBreakdownLine(r);
+        const mainVal = r.statValue || 0;
+        return `<div class="leader-card">
+          ${logo}
+          <div class="leader-main">
+            <span class="leader-name">${r.name} <span class="small">(${r.abbr})</span></span>
+            <span>${mainVal} ${statShort}${mainVal===1?'':'s'}</span>
+            <span class="leader-sub">${sub}</span>
+          </div>
+        </div>`;
+      }).join('');
+
+      leadersWrapEl.hidden = false;
     }
 
-    async function loadWeek(seasonType, weekNum, year) {
+    function updateControlVisibility() {
+      controlsNFL.classList.toggle('hidden', sport !== 'nfl');
+      controlsMLB.classList.toggle('hidden', sport !== 'mlb');
+      controlsNBA.classList.toggle('hidden', sport !== 'nba');
+
+      const playersMode = (viewModeEl.value === 'players');
+      controlsPlayers.classList.toggle('hidden', !playersMode);
+      for (const el of controlsPlayers.querySelectorAll('select')) el.disabled = !playersMode;
+
+      list.hidden = !playersMode;
+      gamesWrapEl.hidden = playersMode;
+
+      setTitleForContext();
+      setAutoNote();
+    }
+
+    // ---------- core loader ----------
+    async function loadData() {
       try {
         status.textContent = 'Loading…';
         list.innerHTML = '';
         gamesEl.innerHTML = '';
 
-        const sb = await getScoreboard(seasonType, weekNum, year);
-        const wk = sb?.week?.number || weekNum;
-        const st = sb?.season?.type || seasonType;
-        setTitle(st, wk);
-
-        // Build team/game metadata and team set
-        const events = Array.isArray(sb.events) ? sb.events : [];
         const teamMetaById = new Map();
         const teamMetaByAbbr = new Map();
         const teamSet = new Set();
-        const gameMeta = new Map(); // eventId -> {home:{abbr,logo}, away:{abbr,logo}, label}
 
-        for (const ev of events) {
-          const comp = ev?.competitions?.[0];
-          const comps = comp?.competitors || [];
-          let home = null, away = null;
-          for (const c of comps) {
-            const t = c?.team; if (!t) continue;
-            const id = t.id, abbr = t.abbreviation;
-            const logo = (t.logos && t.logos[0]?.href) || t.logo || null;
-            if (id && abbr) {
-              if (!teamMetaById.has(id)) teamMetaById.set(id, { abbr, logo });
-              if (!teamMetaByAbbr.has(abbr)) teamMetaByAbbr.set(abbr, { abbr, logo });
-              teamSet.add(abbr);
+        let events = [];
+        const gameMeta = new Map(); // eventId -> {home:{abbr,logo,score}, away:{...}, label, statusText}
+
+        async function fetchAndAccumulateScoreboard(url) {
+          const sb = await fetch(url).then(r => r.json());
+          const evs = Array.isArray(sb.events) ? sb.events : [];
+          for (const ev of evs) {
+            const comp = ev?.competitions?.[0];
+            const comps = comp?.competitors || [];
+            const stObj = comp?.status || ev?.status || {};
+            const statusText = stObj?.type?.shortDetail || stObj?.type?.detail || stObj?.type?.description || '';
+            let home=null, away=null;
+
+            for (const c of comps) {
+              const t = c?.team; if (!t) continue;
+              const id = t.id, abbr = t.abbreviation;
+              const logo = t.logos?.[0]?.href || t.logo || '';
+              const score = (typeof c?.score !== 'undefined') ? String(c.score) : '';
+              if (id && abbr) {
+                if (!teamMetaById.has(id)) teamMetaById.set(id, { abbr, logo });
+                if (!teamMetaByAbbr.has(abbr)) teamMetaByAbbr.set(abbr, { abbr, logo });
+                teamSet.add(abbr);
+              }
+              const side = (c?.homeAway || '').toLowerCase();
+              if (side === 'home') home = { abbr, logo, score };
+              if (side === 'away') away = { abbr, logo, score };
             }
-            const side = (c?.homeAway || '').toLowerCase();
-            if (side === 'home') home = { abbr, logo };
-            if (side === 'away') away = { abbr, logo };
+            const label = ev?.name || '';
+            if (home && away) gameMeta.set(ev.id, { home, away, label, statusText });
+
+            events.push(ev);
           }
-          const label = ev?.name || '';
-          if (home && away) gameMeta.set(ev.id, { home, away, label });
         }
 
-        populateTeamFilterFromSet(teamSet);
+        if (sport === 'nfl') {
+          await fetchAndAccumulateScoreboard(urls.nfl.scoreboard({ seasontype: 2, week: activeWeek, year: currentSeasonYear }));
+        } else if (sport === 'mlb') {
+          await fetchAndAccumulateScoreboard(urls.mlb.scoreboard());
+        } else {
+          if (viewModeEl.value === 'players') {
+            const listOfDates = nbaDates.map(d => d.value); // last 7 days
+            for (let i=0; i<listOfDates.length; i+=3) {
+              await Promise.all(listOfDates.slice(i,i+3).map(d => fetchAndAccumulateScoreboard(urls.nba.scoreboard(d))));
+            }
+          } else {
+            await fetchAndAccumulateScoreboard(urls.nba.scoreboard(nbaSelectedDate));
+          }
+        }
+
+        setTeamFilterOptions(teamSet);
 
         if (!events.length) {
-          status.textContent = 'No games found for this week.';
+          status.textContent = 'No games found for this selection.';
           currentItems = []; currentGames = [];
-          renderPlayersList(); renderMatchups(); updateViewVisibility();
+          renderPlayersList(); renderMatchups(); renderLeaders(); updateControlVisibility();
+          stamp.textContent = `Last fetched: ${new Date().toLocaleString()}`;
           return;
         }
 
-        // Aggregate (global + per-game)
-        const byPlayer = new Map(); // key -> { total, byType:{}, logo, abbr, name, label }
-        const games = new Map();    // eventId -> { home:{abbr,logo,players:{}}, away:{...}, label }
-        const seenPlays = new Set();
+        const byPlayer = new Map();
+        const games = new Map();
 
         function ensureGlobalRow(name, abbr, logoUrl) {
           const label = `${name} (${abbr})`;
           if (!byPlayer.has(label)) byPlayer.set(label, {
-            total: 0, byType: {}, logo: logoUrl || '', abbr, name, label
+            name, abbr, logo: logoUrl || '',
+            label,
+            byType: {}, mlb: {h:0,r:0,rbi:0,tb:0,hr:0}, nba: {pts:0,reb:0,ast:0,tpm:0},
+            total: 0, statValue: 0
           });
           return byPlayer.get(label);
         }
-
         function ensureGame(eventId) {
           if (!games.has(eventId)) {
-            const meta = gameMeta.get(eventId) || { home:{abbr:'HOME',logo:''}, away:{abbr:'AWAY',logo:''}, label:'' };
+            const meta = gameMeta.get(eventId) || { home:{abbr:'HOME',logo:'',score:''}, away:{abbr:'AWAY',logo:'',score:''}, label:'', statusText:'' };
             games.set(eventId, {
-              home: { abbr: meta.home.abbr, logo: meta.home.logo, players: {} },
-              away: { abbr: meta.away.abbr, logo: meta.away.logo, players: {} },
-              label: meta.label
+              home: { abbr: meta.home.abbr, logo: meta.home.logo, score: meta.home.score, players: {} },
+              away: { abbr: meta.away.abbr, logo: meta.away.logo, score: meta.away.score, players: {} },
+              label: meta.label,
+              statusText: meta.statusText
             });
           }
           return games.get(eventId);
         }
+        function selectStatFromMLB(o){ return { tb:o.tb, rbi:o.rbi, r:o.r, h:o.h, hr:o.hr }; }
+        function selectStatFromNBA(o){ return { pts:o.pts, reb:o.reb, ast:o.ast, '3pm':o.tpm }; }
 
-        function bumpGamePlayer(g, teamAbbr, name, cat) {
-          const side = (teamAbbr === g.home.abbr) ? 'home' : (teamAbbr === g.away.abbr ? 'away' : null);
-          if (!side) return;
-          const bucket = g[side].players;
-          if (!bucket[name]) bucket[name] = { name, total:0, byType:{} };
-          bucket[name].total += 1;
-          bucket[name].byType[cat] = (bucket[name].byType[cat] || 0) + 1;
+        for (let i=0; i<events.length; i+=5) {
+          await Promise.all(events.slice(i,i+5).map(async ev => {
+            const id = ev.id || (ev.uid && ev.uid.split('~').pop());
+            if (!id) return;
+            let data;
+            if (sport === 'nfl') data = await fetch(urls.nfl.summary(id)).then(r=>r.json());
+            else if (sport === 'mlb') data = await fetch(urls.mlb.summary(id)).then(r=>r.json());
+            else data = await fetch(urls.nba.summary(id)).then(r=>r.json());
+
+            if (sport === 'nfl') {
+              const plays = Array.isArray(data.scoringPlays) ? data.scoringPlays : [];
+              for (const p of plays) {
+                const isTD = String(p?.type?.text || '').toLowerCase().includes('touchdown') || /\btd\b|touchdown/.test((p.text||'').toLowerCase());
+                if (!isTD) continue;
+                const teamAbbr = p?.team?.abbreviation || '';
+                const teamId = p?.team?.id;
+                const meta = (teamId && teamMetaById.get(teamId)) || teamMetaByAbbr.get(teamAbbr) || { abbr: teamAbbr, logo: '' };
+                const cat = tdCategoryNFL(p);
+                const primary = (Array.isArray(p.players)?p.players:[]).find(x => x?.athlete?.displayName);
+                const name = (primary?.athlete?.displayName || ((/([A-Z][\w.\-'\s]+)\s+\d+\s*(yd|yard)/i.exec(p.text || '') || [])[1]) || 'Unknown').trim();
+
+                const row = ensureGlobalRow(name, meta.abbr || teamAbbr, meta.logo);
+                row.total += 1; row.byType[cat] = (row.byType[cat]||0) + 1; row.statValue = row.total;
+
+                const g = ensureGame(id);
+                const side = (meta.abbr===g.home.abbr)?'home':(meta.abbr===g.away.abbr?'away':null);
+                if (side) {
+                  const bucket = g[side].players;
+                  if (!bucket[name]) bucket[name] = { name, total:0, byType:{}, statValue:0 };
+                  bucket[name].total += 1; bucket[name].byType[cat]=(bucket[name].byType[cat]||0)+1;
+                  bucket[name].statValue = bucket[name].total;
+                }
+              }
+            } else if (sport === 'mlb') {
+              const hitters = extractMLBHittersFromBoxscore(data);
+              for (const [name, s] of Object.entries(hitters)) {
+                const meta = teamMetaByAbbr.get(s.teamAbbr) || { abbr: s.teamAbbr, logo:'' };
+                const row = ensureGlobalRow(name, meta.abbr, meta.logo);
+                const dest=row.mlb; dest.h+=s.h; dest.r+=s.r; dest.rbi+=s.rbi; dest.tb+=s.tb; dest.hr+=s.hr;
+                row.statValue = selectStatFromMLB(dest)[mlbStatEl.value] || 0;
+
+                const g = ensureGame(id);
+                const side = (meta.abbr===g.home.abbr)?'home':(meta.abbr===g.away.abbr?'away':null);
+                if (side) {
+                  const bucket=g[side].players;
+                  if (!bucket[name]) bucket[name]={ name, mlb:{h:0,r:0,rbi:0,tb:0,hr:0}, statValue:0 };
+                  const t=bucket[name].mlb; t.h+=s.h; t.r+=s.r; t.rbi+=s.rbi; t.tb+=s.tb; t.hr+=s.hr;
+                  bucket[name].statValue = selectStatFromMLB(t)[mlbStatEl.value] || 0;
+                }
+              }
+            } else {
+              const players = extractNBAPlayersFromBoxscore(data); // name -> {pts,reb,ast,tpm,teamAbbr}
+              for (const [name, s] of Object.entries(players)) {
+                const meta = teamMetaByAbbr.get(s.teamAbbr) || { abbr: s.teamAbbr, logo:'' };
+                const row = ensureGlobalRow(name, meta.abbr, meta.logo);
+                const dest=row.nba; dest.pts+=s.pts; dest.reb+=s.reb; dest.ast+=s.ast; dest.tpm+=s.tpm;
+                row.statValue = selectStatFromNBA(dest)[nbaStatEl.value] || 0;
+
+                const g = ensureGame(id);
+                const side = (meta.abbr===g.home.abbr)?'home':(meta.abbr===g.away.abbr?'away':null);
+                if (side) {
+                  const bucket=g[side].players;
+                  if (!bucket[name]) bucket[name]={ name, nba:{pts:0,reb:0,ast:0,tpm:0}, statValue:0 };
+                  const t=bucket[name].nba; t.pts+=s.pts; t.reb+=s.reb; t.ast+=s.ast; t.tpm+=s.tpm;
+                  bucket[name].statValue = selectStatFromNBA(t)[nbaStatEl.value] || 0;
+                }
+              }
+            }
+          }));
         }
 
-        async function processEvent(ev) {
-          const id = ev.id || (ev.uid && ev.uid.split('~').pop());
-          if (!id) return;
-          const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${id}`;
-          const data = await fetch(summaryUrl).then(r => r.json());
-          const plays = Array.isArray(data.scoringPlays) ? data.scoringPlays : [];
-          for (const p of plays) {
-            const unique = p.id || `${id}:${p.clock && p.clock.displayValue}:${p.text}`;
-            if (seenPlays.has(unique)) continue;
-            seenPlays.add(unique);
-
-            const isTD = String(p.type && p.type.text || '').toLowerCase().includes('touchdown')
-                      || /\btd\b|touchdown/.test((p.text || '').toLowerCase());
-            if (!isTD) continue;
-
-            const teamAbbr = p.team?.abbreviation || '';
-            const teamId = p.team?.id;
-            const meta = (teamId && teamMetaById.get(teamId)) || teamMetaByAbbr.get(teamAbbr) || { abbr: teamAbbr, logo: '' };
-            const cat = tdCategory(p);
-
-            const players = Array.isArray(p.players) ? p.players : [];
-            const primary = players.find(x =>
-              x && x.type && /scorer|rush|receive|return|interception|fumble/i.test(x.type.text || '')
-            );
-
-            const name = primary?.athlete?.displayName
-              || ((/([A-Z][\w.\-'\s]+)\s+\d+\s*(yd|yard)/i.exec(p.text || '') || [])[1] || 'Unknown').trim();
-
-            // Global
-            const row = ensureGlobalRow(name, meta.abbr || teamAbbr, meta.logo);
-            row.total += 1;
-            row.byType[cat] = (row.byType[cat] || 0) + 1;
-
-            // Game
-            const g = ensureGame(id);
-            bumpGamePlayer(g, meta.abbr || teamAbbr, name, cat);
-          }
-        }
-
-        // Process all events with gentle concurrency
-        for (let i = 0; i < events.length; i += 6) {
-          await Promise.all(events.slice(i, i + 6).map(processEvent));
-        }
-
-        // Store + render
         currentItems = [...byPlayer.values()];
-        renderPlayersList();
-
         currentGames = events.map(ev => games.get(ev.id)).filter(Boolean);
-        // Only render matchups section if user chooses it
+
+        renderPlayersList();
         if (viewModeEl.value === 'matchups') renderMatchups();
+        renderLeaders();
 
         status.textContent = '';
         stamp.textContent = `Last fetched: ${new Date().toLocaleString()}`;
 
-        // auto-refresh rule
         startAutoRefresh();
-
-        // Ensure correct visibility for current view
-        updateViewVisibility();
+        updateControlVisibility();
       } catch (err) {
         console.error(err);
-        status.textContent = 'Could not load TD scorers.';
+        status.textContent = 'Could not load data.';
       }
     }
 
-    // --------- init ----------
+    // ---------- init ----------
     try {
-      // Detect current week/year from ESPN
-      const sbNow = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard').then(r => r.json());
-      currentSeasonYear = sbNow?.season?.year || new Date().getFullYear();
-      currentSeasonType = sbNow?.season?.type || 2;
-      currentWeek = sbNow?.week?.number || 1;
-
-      // Default to current regular-season week
-      activeSeasonType = 2;
+      const sbNowNFL = await fetch(urls.nfl.scoreboard()).then(r => r.json());
+      currentSeasonYear = sbNowNFL?.season?.year || new Date().getFullYear();
+      currentSeasonType = sbNowNFL?.season?.type || 2;
+      currentWeek = sbNowNFL?.week?.number || 1;
       activeWeek = (currentSeasonType === 2 && currentWeek) ? currentWeek : currentWeek || 1;
-
-      // Build the week dropdown
       populateWeekDropdown(activeWeek);
 
-      // React to week changes
-      weekSelectEl.addEventListener('change', () => {
-        activeSeasonType = 2; // dropdown covers regular season
-        activeWeek = parseInt(weekSelectEl.value, 10);
-        // Reset players-only controls to defaults
+      buildNBADates();
+
+      // Handlers
+      sportSelectEl.addEventListener('change', () => {
+        sport = sportSelectEl.value;
         teamFilterEl.value = '';
-        sortModeEl.value = 'td';
-        loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
+        sortModeEl.value = 'stat';
+        updateControlVisibility();
+        loadData();
       });
 
-      // View mode toggle (show/hide players-only controls and sections)
+      weekSelectEl.addEventListener('change', () => {
+        activeWeek = parseInt(weekSelectEl.value, 10);
+        teamFilterEl.value = '';
+        sortModeEl.value = 'stat';
+        loadData();
+      });
+
+      mlbStatEl.addEventListener('change', () => {
+        if (sport === 'mlb') {
+          for (const row of currentItems) if (row.mlb) row.statValue = ({tb:row.mlb.tb,rbi:row.mlb.rbi,r:row.mlb.r,h:row.mlb.h,hr:row.mlb.hr})[mlbStatEl.value] || 0;
+          for (const g of currentGames) for (const side of ['home','away']) for (const p of Object.values(g[side].players)) if (p.mlb) p.statValue = ({tb:p.mlb.tb,rbi:p.mlb.rbi,r:p.mlb.r,h:p.mlb.h,hr:p.mlb.hr})[mlbStatEl.value] || 0;
+          setTitleForContext(); renderPlayersList(); if (list.hidden) renderMatchups(); renderLeaders();
+        }
+      });
+
+      nbaStatEl.addEventListener('change', () => {
+        if (sport === 'nba') {
+          for (const row of currentItems) if (row.nba) row.statValue = ({pts:row.nba.pts,reb:row.nba.reb,ast:row.nba.ast,'3pm':row.nba.tpm})[nbaStatEl.value] || 0;
+          for (const g of currentGames) for (const side of ['home','away']) for (const p of Object.values(g[side].players)) if (p.nba) p.statValue = ({pts:p.nba.pts,reb:p.nba.reb,ast:p.nba.ast,'3pm':p.nba.tpm})[nbaStatEl.value] || 0;
+          setTitleForContext(); renderPlayersList(); if (list.hidden) renderMatchups(); renderLeaders();
+        }
+      });
+
+      nbaDateEl.addEventListener('change', () => {
+        nbaSelectedDate = nbaDateEl.value;
+        if (sport === 'nba' && viewModeEl.value === 'matchups') loadData();
+        setTitleForContext();
+      });
+
       viewModeEl.addEventListener('change', () => {
-        updateViewVisibility();
-        // If switching to matchups for the first time in this load, ensure it's rendered
+        updateControlVisibility();
         if (viewModeEl.value === 'matchups' && gamesEl.innerHTML.trim() === '') {
           renderMatchups();
         }
       });
 
-      // Local controls: re-render players list without refetch
-      teamFilterEl.addEventListener('change', renderPlayersList);
-      sortModeEl.addEventListener('change', renderPlayersList);
+      teamFilterEl.addEventListener('change', () => { renderPlayersList(); /* ribbon stays global */ });
+      sortModeEl.addEventListener('change', () => { renderPlayersList(); /* ribbon stays global */ });
 
-      // Initial load
-      await loadWeek(activeSeasonType, activeWeek, currentSeasonYear);
+      await loadData();
     } catch (e) {
       console.error(e);
       status.textContent = 'Failed to initialize.';
