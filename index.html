@@ -113,7 +113,9 @@
     <span id="controlsNFL">
       <label for="weekSelect">Week:</label>
       <select id="weekSelect"></select>
-      <button id="nflCsvBtn" type="button" title="Every player who touched the ball, every week played so far">Download season CSV</button>
+      <label for="csvSeason">CSV season:</label>
+      <select id="csvSeason"></select>
+      <button id="nflCsvBtn" type="button" title="Every player who touched the ball, every week played so far, plus pregame rows for the upcoming week">Download season CSV</button>
       <span id="nflCsvStatus" class="small"></span>
     </span>
 
@@ -382,7 +384,10 @@
     // NFL: is this scoring play a touchdown?
     function isTouchdownNFL(p) {
       if (p?.scoringType?.name) return p.scoringType.name === 'touchdown';
-      return String(p?.type?.text || '').toLowerCase().includes('touchdown') || /\btd\b|touchdown/.test((p?.text||'').toLowerCase());
+      const text = String(p?.text || '');
+      return String(p?.type?.text || '').toLowerCase().includes('touchdown') || /\btd\b|touchdown/i.test(text)
+        || /\([^)]*\b(kick|pat|two-point|2-pt)\b[^)]*\)\s*$/i.test(text); // followed by an extra-point try
+
     }
 
     // NFL: pull the scorer's name out of the play text.
@@ -391,8 +396,13 @@
     function parseScorerNameNFL(p) {
       const named = (Array.isArray(p?.players) ? p.players : []).find(x => x?.athlete?.displayName);
       if (named) return named.athlete.displayName;
-      const t = String(p?.text || '').replace(/^(\([^)]*\)\s*)+/, '').trim();
+      let t = String(p?.text || '').replace(/^(\([^)]*\)\s*)+/, '').trim();
       let m;
+      // Older ESPN formats: "AJ Barner Pass From Geno Smith for 9 Yds",
+      // "Blocked Kick Recovered by Jordan Davis (PHI) ...", "C.J. Stroud Aborted Snap C.J. Stroud Fumble Woody Marks 1 Yd ..."
+      if ((m = /^(.+?)\s+Pass From\b/.exec(t))) return m[1].trim();
+      if ((m = /\bRecovered by\s+(.+?)\s*\(/.exec(t))) return m[1].trim();
+      if (/\bAborted\b/.test(t)) t = t.replace(/^.*\bFumble\s+(?=[A-Z][\w'.\-]+\s+[A-Z][\w'.\-]+.*?\d+\s*Yd)/, '');
       // Laterals: the last player to receive the ball scored.
       const laterals = [...t.matchAll(/\blateral(?:ed)?\s+to\s+([A-Z][\w'.\-]*(?:\s+[A-Z][\w'.\-]*)*?)\s+for\b/g)];
       if (laterals.length) return laterals[laterals.length - 1][1].trim();
@@ -402,7 +412,7 @@
         if (m) return m[1].trim();
       }
       m = /^(.+?)\s+\d+\s*(?:yd|yard)/i.exec(t)
-       || /^(.+?)\s+(?:fumble|interception|punt|kickoff|blocked|recovery|return|pass|rush|run)\b/i.exec(t);
+       || /^(.+?)\s+(?:fumble|interception|punt|kickoff|blocked|recovery|recovered|return|returned|pass|rush|run)\b/i.exec(t);
       return m ? m[1].trim() : 'Unknown';
     }
 
@@ -414,9 +424,9 @@
         const seen = byTeam.get(tid) || [];
         for (const g of (block?.statistics || [])) for (const a of (g?.athletes || [])) {
           const at = a?.athlete; if (!at?.displayName) continue;
-          if (!seen.some(s => s.display === at.displayName)) {
-            seen.push({ id: String(at.id || ''), first: at.firstName || '', last: at.lastName || '', display: at.displayName });
-          }
+          let e = seen.find(s => s.display === at.displayName);
+          if (!e) { e = { id: String(at.id || ''), first: at.firstName || '', last: at.lastName || '', display: at.displayName, groups: new Set() }; seen.push(e); }
+          e.groups.add(g.name); // passing / rushing / receiving / ...
         }
         byTeam.set(tid, seen);
       }
@@ -428,12 +438,17 @@
 
     // Expand abbreviated names ("J.Gibbs", "Ja.Chase", "A.St. Brown") and normalize suffixes
     // ("Deebo Samuel" vs "Deebo Samuel Sr.") to ESPN's roster name.
-    function findRosterPlayerNFL(name, teamId, roster) {
+    // preferGroup ('rushing' / 'receiving') breaks ties like two "C.Williams" on one team.
+    function findRosterPlayerNFL(name, teamId, roster, preferGroup) {
       const players = roster?.get(String(teamId)) || [];
       const m = /^([A-Z][a-z]?)\.\s?(.+)$/.exec(name);
       if (m) {
         const hits = players.filter(a => a.first.toLowerCase().startsWith(m[1].toLowerCase()) && normNameNFL(a.last) === normNameNFL(m[2]));
         if (hits.length === 1) return hits[0];
+        if (hits.length > 1 && preferGroup) {
+          const inGroup = hits.filter(a => a.groups?.has(preferGroup));
+          if (inGroup.length === 1) return inGroup[0];
+        }
       }
       const hits = players.filter(a => normNameNFL(a.display) === normNameNFL(name));
       if (hits.length === 1) return hits[0];
@@ -530,20 +545,32 @@
           { report: r.report_status, practice: r.practice_status, pos: r.position });
       }
       // Fallback index by last name, for first-name differences ("Josh" vs "Joshua", "Hollywood" vs "Marquise").
+      // If several players share the last name, pick the one whose first name is compatible ("Gabe"/"Gabriel").
+      const firstKey = n => normNameNFL(String(n || '').trim().split(/\s+/)[0]);
       const byLast = map => {
         const out = new Map();
         for (const [k, v] of map) {
-          const [wk, tm, full] = k.split('|');
+          const [wk, tm] = k.split('|');
           const lk = `${wk}|${tm}|${v.last}`;
-          out.set(lk, out.has(lk) ? null : v); // null = ambiguous
+          if (!out.has(lk)) out.set(lk, []);
+          out.get(lk).push(v);
         }
         return out;
       };
-      for (const s of snaps) { const v = snapBy.get(`${+s.week}|${s.team}|${normNameNFL(s.player)}`); if (v) v.last = lastNameKeyNFL(s.player); }
-      for (const r of injuries) { const v = injBy.get(`${+r.week}|${r.team}|${normNameNFL(r.full_name)}`); if (v) v.last = lastNameKeyNFL(r.full_name); }
+      for (const s of snaps) { const v = snapBy.get(`${+s.week}|${s.team}|${normNameNFL(s.player)}`); if (v) { v.last = lastNameKeyNFL(s.player); v.first = firstKey(s.player); } }
+      for (const r of injuries) { const v = injBy.get(`${+r.week}|${r.team}|${normNameNFL(r.full_name)}`); if (v) { v.last = lastNameKeyNFL(r.full_name); v.first = firstKey(r.full_name); } }
       const snapByLast = byLast(snapBy), injByLast = byLast(injBy);
-      const find = (map, lastMap, week, team, name) =>
-        map.get(`${week}|${team}|${normNameNFL(name)}`) || lastMap.get(`${week}|${team}|${lastNameKeyNFL(name)}`) || null;
+      const find = (map, lastMap, week, team, name) => {
+        const exact = map.get(`${week}|${team}|${normNameNFL(name)}`);
+        if (exact) return exact;
+        const cands = lastMap.get(`${week}|${team}|${lastNameKeyNFL(name)}`) || [];
+        if (cands.length === 1) return cands[0];
+        const f = firstKey(name);
+        const compat = cands.filter(c => c.first && f && (c.first.startsWith(f) || f.startsWith(c.first)));
+        if (compat.length === 1) return compat[0];
+        const initial = cands.filter(c => c.first && f && c.first[0] === f[0]); // "Gabe" vs "Gabriel"
+        return initial.length === 1 ? initial[0] : null;
+      };
       return {
         snap: (w, t, n) => find(snapBy, snapByLast, w, t, n),
         injury: (w, t, n) => find(injBy, injByLast, w, t, n),
@@ -568,80 +595,129 @@
       return byId;
     }
 
+    // nflverse schedule: betting lines and rest days for every season (served with CORS).
+    let nflverseGamesCache = null;
+    async function loadNflverseGames() {
+      if (!nflverseGamesCache) {
+        nflverseGamesCache = fetch('https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv')
+          .then(r => r.ok ? r.text() : '').then(parseCSV).catch(() => []);
+      }
+      const byEspnId = new Map();
+      for (const g of await nflverseGamesCache) if (g.espn && g.espn !== 'NA') byEspnId.set(String(g.espn), g);
+      return byEspnId;
+    }
+
     // One row per player per game: everyone who passed, ran, was targeted, or scored a TD,
-    // for every regular-season week with games played so far.
-    async function buildNFLSeasonCSV(onProgress) {
-      const lastWeek = currentSeasonType === 2 ? currentWeek
+    // for every regular-season week played so far, plus pregame-only rows for the upcoming week.
+    // Every "Prior", "Last 3", "Team Prior" and "Opp" column uses only games completed before that week.
+    async function buildNFLSeasonCSV(season, onProgress) {
+      const isCurrent = season === currentSeasonYear;
+      const lastWeek = !isCurrent ? TOTAL_REG_WEEKS
+                     : currentSeasonType === 2 ? currentWeek
                      : currentSeasonType >= 3 ? TOTAL_REG_WEEKS : 0;
       if (!lastWeek) throw new Error('No regular-season weeks have been played yet.');
+      const sbUrl = w => {
+        const u = new URL('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+        u.searchParams.set('seasontype', '2'); u.searchParams.set('week', String(w));
+        if (isCurrent) u.searchParams.set('year', String(season)); else u.searchParams.set('dates', String(season));
+        return u.toString();
+      };
 
-      // 1) Scoreboards for each week -> games that have kicked off
-      const games = [];
-      const teamIds = new Set();
+      // 1) Scoreboards -> games played (and the upcoming week's scheduled games)
+      const games = [], upcoming = [], teamIds = new Set();
       for (let w = 1; w <= lastWeek; w++) {
-        onProgress(`Loading schedule: week ${w} of ${lastWeek}…`);
-        const sb = await fetch(urls.nfl.scoreboard({ seasontype: 2, week: w, year: currentSeasonYear })).then(r => r.json());
+        onProgress(`Loading ${season} schedule: week ${w} of ${lastWeek}…`);
+        const sb = await fetch(sbUrl(w)).then(r => r.json());
         for (const ev of (sb.events || [])) {
           const comp = ev?.competitions?.[0];
           const st = comp?.status?.type || ev?.status?.type || {};
-          if (st.state === 'pre') continue;
           const sides = {};
           for (const c of (comp?.competitors || [])) {
             const tid = String(c?.team?.id);
             teamIds.add(tid);
             sides[tid] = { abbr: c?.team?.abbreviation || '', homeAway: c?.homeAway === 'home' ? 'Home' : 'Away' };
           }
-          games.push({ week: w, id: ev.id, date: ev.date, completed: !!st.completed,
-                       status: st.completed ? 'Final' : (st.shortDetail || 'In progress'), sides });
+          const g = { week: w, id: String(ev.id), date: ev.date, completed: !!st.completed, sides,
+                      status: st.completed ? 'Final' : st.state === 'pre' ? 'Scheduled' : (st.shortDetail || 'In progress') };
+          if (st.state === 'pre') { if (isCurrent && w === lastWeek) upcoming.push(g); }
+          else games.push(g);
         }
       }
-      if (!games.length) throw new Error('No games have been played yet this season.');
+      if (!games.length && !upcoming.length) throw new Error('No games found for this season.');
 
-      onProgress('Loading rosters, snap counts and injury reports…');
-      const [positions, nv] = await Promise.all([loadPositionsNFL(teamIds), loadNflverseNFL(currentSeasonYear)]);
+      onProgress('Loading rosters, betting lines, snap counts and injury reports…');
+      const [positions, nv, nvGames] = await Promise.all([
+        loadPositionsNFL(teamIds), loadNflverseNFL(season), loadNflverseGames()
+      ]);
 
-      // 2) Game summaries
-      const rows = new Map();
-      const defenseGames = []; // what each defense allowed, per completed game
       const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
-      let done = 0; const rzUnmatched = [];
-      const BATCH = 6;
-      for (let i = 0; i < games.length; i += BATCH) {
-        await Promise.all(games.slice(i, i + BATCH).map(async g => {
-          const data = await fetch(urls.nfl.summary(g.id)).then(r => r.json());
-          const roster = buildRosterNFL(data);
-          const tids = Object.keys(g.sides);
+      const abbrsOf = g => Object.keys(g.sides).map(t => g.sides[t].abbr);
 
-          // Betting line -> implied team totals. details looks like "SEA -3" (or "EVEN").
-          const pc = (data.pickcenter || [])[0];
-          const lines = {};
+      // Lines + rest days per team for a game: nflverse schedule first, ESPN pickcenter as fallback.
+      function gameContext(g, summary) {
+        const out = {};
+        const tids = Object.keys(g.sides);
+        const nvg = nvGames.get(g.id);
+        if (nvg && nvg.spread_line !== 'NA' && nvg.spread_line !== '' && nvg.total_line !== 'NA' && nvg.total_line !== '') {
+          const homeFav = num(nvg.spread_line), total = num(nvg.total_line); // spread_line > 0: home favored
+          for (const tid of tids) {
+            const home = g.sides[tid].homeAway === 'Home';
+            const spread = home ? -homeFav : homeFav;
+            out[tid] = { total, spread, implied: total / 2 - spread / 2 };
+          }
+        } else {
+          const pc = (summary?.pickcenter || [])[0];
           if (pc && Number.isFinite(pc.overUnder)) {
             const m = /^([A-Z]{2,4})\s+(-?\d+(?:\.\d+)?)/.exec(pc.details || '');
             const favAbbr = m ? m[1] : null, line = m ? Math.abs(parseFloat(m[2])) : 0;
             for (const tid of tids) {
-              const fav = g.sides[tid].abbr === favAbbr;
-              const spread = favAbbr ? (fav ? -line : line) : 0;
-              lines[tid] = { total: pc.overUnder, spread, implied: pc.overUnder / 2 - spread / 2 };
+              const spread = favAbbr ? (g.sides[tid].abbr === favAbbr ? -line : line) : 0;
+              out[tid] = { total: pc.overUnder, spread, implied: pc.overUnder / 2 - spread / 2 };
             }
           }
+        }
+        if (nvg) for (const tid of tids) {
+          const rest = g.sides[tid].homeAway === 'Home' ? nvg.home_rest : nvg.away_rest;
+          (out[tid] ||= {}).rest = rest && rest !== 'NA' ? +rest : '';
+        }
+        return out;
+      }
 
-          const ensureRow = (tid, player) => {
-            const key = `${g.id}|${tid}|${player.id || player.display}`;
-            if (!rows.has(key)) {
-              const oppId = tids.find(t => t !== tid);
-              rows.set(key, {
-                week: g.week, date: g.date, status: g.status, gameId: g.id, completed: g.completed,
-                pid: player.id || `name:${player.display}`, name: player.display,
-                teamId: tid, team: g.sides[tid]?.abbr || '', oppId, opp: oppId ? g.sides[oppId].abbr : '',
-                homeAway: g.sides[tid]?.homeAway || '', line: lines[tid],
-                rushing: 0, receiving: 0, other: 0, otherTypes: new Set(),
-                carries: 0, targets: 0, rec: 0, rushYds: 0, recYds: 0, passAtt: 0, rzCarries: 0, rzTargets: 0
-              });
-            }
-            return rows.get(key);
-          };
+      // 2) Game summaries
+      const rows = new Map();
+      const teamGames = new Map(); // `${gameId}|${teamId}` -> offense + allowed stats (completed games)
+      const diag = { rzUnmatched: [] };
+      const ensureRowFor = (g, ctx) => (tid, player) => {
+        const key = `${g.id}|${tid}|${player.id || player.display}`;
+        if (!rows.has(key)) {
+          const tids = Object.keys(g.sides), oppId = tids.find(t => t !== tid);
+          rows.set(key, {
+            week: g.week, date: g.date, status: g.status, gameId: g.id, completed: g.completed, upcoming: g.status === 'Scheduled',
+            pid: player.id || `name:${player.display}`, name: player.display,
+            teamId: tid, team: g.sides[tid]?.abbr || '', oppId, opp: oppId ? g.sides[oppId].abbr : '',
+            homeAway: g.sides[tid]?.homeAway || '', ctx: ctx[tid] || {},
+            rushing: 0, receiving: 0, other: 0, otherTypes: new Set(),
+            carries: 0, targets: 0, rec: 0, rushYds: 0, recYds: 0, passAtt: 0,
+            rzCarries: 0, rzTargets: 0, i10Carries: 0, i10Targets: 0
+          });
+        }
+        return rows.get(key);
+      };
 
-          // Box score: carries, targets, yards
+      let done = 0;
+      const all = [...games, ...upcoming];
+      const BATCH = 6;
+      for (let i = 0; i < all.length; i += BATCH) {
+        await Promise.all(all.slice(i, i + BATCH).map(async g => {
+          const data = await fetch(urls.nfl.summary(g.id)).then(r => r.json()).catch(() => ({}));
+          const ctx = gameContext(g, data);
+          g.ctx = ctx;
+          if (g.status === 'Scheduled') { done++; return; }   // upcoming: rows are added in step 3
+          const roster = buildRosterNFL(data);
+          const tids = Object.keys(g.sides);
+          const ensureRow = ensureRowFor(g, ctx);
+
+          // Box score usage
           for (const block of (data?.boxscore?.players || [])) {
             const tid = String(block?.team?.id || '');
             if (!g.sides[tid]) continue;
@@ -665,56 +741,72 @@
             const tid = String(p?.team?.id || '');
             if (!g.sides[tid]) continue;
             const raw = parseScorerNameNFL(p);
-            const pl = findRosterPlayerNFL(raw, tid, roster) || { id: '', display: raw };
-            const r = ensureRow(tid, pl);
+            const r = ensureRow(tid, findRosterPlayerNFL(raw, tid, roster) || { id: '', display: raw });
             const cat = tdCategoryNFL(p);
             if (cat === 'Rushing') r.rushing++;
             else if (cat === 'Receiving') r.receiving++;
             else { r.other++; r.otherTypes.add(cat === 'TD' ? 'Other' : cat); }
           }
 
-          // Red zone (snap starts at opponent 20 or closer): carries and targets
+          // Red zone (<= 20 yards out) and inside-the-10 carries / targets
           for (const dr of (data?.drives?.previous || [])) {
             for (const p of (dr.plays || [])) {
               const tid = String(p?.start?.team?.id || dr?.team?.id || '');
-              const ytg = yardsToEndzoneNFL(p, g.sides[tid]?.abbr, tids.map(t => g.sides[t].abbr));
+              const ytg = yardsToEndzoneNFL(p, g.sides[tid]?.abbr, abbrsOf(g));
               if (!(ytg !== null && ytg <= 20)) continue;
               const opp = pbpOpportunityNFL(p);
-              if (!opp) {
-                if (/^(Rush|Rushing Touchdown|Pass Reception|Pass Incompletion|Passing Touchdown)$/.test(p?.type?.text || '') && !/\bno play\b/i.test(p.text || ''))
-                  rzUnmatched.push(`NOPARSE ${g.week} ${p.type.text} | ${p.text}`);
-                continue;
-              }
-              const pl = findRosterPlayerNFL(opp.name, tid, roster);
-              if (!pl) { rzUnmatched.push(`${g.week} ${g.sides[tid]?.abbr} ${opp.name} | ${p.text}`); continue; }
+              if (!opp) continue;
+              const pl = findRosterPlayerNFL(opp.name, tid, roster, opp.kind === 'rush' ? 'rushing' : 'receiving');
+              if (!pl) { diag.rzUnmatched.push(`${g.week} ${g.sides[tid]?.abbr} ${opp.name} | ${p.text}`); continue; }
               const r = ensureRow(tid, pl);
-              if (opp.kind === 'rush') r.rzCarries++; else r.rzTargets++;
+              if (opp.kind === 'rush') { r.rzCarries++; if (ytg <= 10) r.i10Carries++; }
+              else { r.rzTargets++; if (ytg <= 10) r.i10Targets++; }
             }
           }
 
-          // What each defense allowed (completed games only)
+          // Team offense and what each defense allowed (completed games only)
           if (g.completed) {
-            const offense = {};
-            for (const t of (data?.boxscore?.teams || [])) {
-              const stat = n => num((t.statistics || []).find(s => s.name === n)?.displayValue);
-              offense[String(t?.team?.id)] = { yds: stat('totalYards'), rush: stat('rushingYards'), pass: stat('netPassingYards') };
-            }
             const comps = data?.header?.competitions?.[0]?.competitors || [];
-            for (const c of comps) {
-              const tid = String(c?.team?.id), oppId = tids.find(t => t !== tid);
-              const oppC = comps.find(x => String(x?.team?.id) === oppId);
-              if (offense[oppId]) defenseGames.push({ week: g.week, teamId: tid, gameId: g.id, pts: num(oppC?.score), ...offense[oppId] });
+            const off = {};
+            for (const t of (data?.boxscore?.teams || [])) {
+              const sv = n => (t.statistics || []).find(s => s.name === n)?.displayValue;
+              const [rzTD, rzTrips] = String(sv('redZoneAttempts') || '0-0').split('-').map(num);
+              const tid = String(t?.team?.id);
+              off[tid] = { pts: num(comps.find(c => String(c?.team?.id) === tid)?.score),
+                           yds: num(sv('totalYards')), plays: num(sv('totalOffensivePlays')),
+                           rush: num(sv('rushingYards')), pass: num(sv('netPassingYards')), rzTD, rzTrips };
+            }
+            for (const tid of tids) {
+              const oppId = tids.find(t => t !== tid);
+              if (off[tid] && off[oppId]) teamGames.set(`${g.id}|${tid}`, { gameId: g.id, week: g.week, date: g.date, teamId: tid, off: off[tid], allowed: off[oppId] });
             }
           }
 
           done++;
-          onProgress(`Loading games: ${done} of ${games.length}…`);
+          onProgress(`Loading ${season} games: ${done} of ${all.length}…`);
         }));
       }
 
-      // 3) Positions, snaps, injuries
-      const all = [...rows.values()];
-      for (const r of all) {
+      // 3) Upcoming week: one pregame row per player who appeared in either of the team's last two games.
+      if (upcoming.length) {
+        const played = [...rows.values()];
+        for (const g of upcoming) {
+          const ensureRow = ensureRowFor(g, g.ctx || {});
+          for (const tid of Object.keys(g.sides)) {
+            const weeks = [...new Set(played.filter(r => r.teamId === tid).map(r => r.week))].sort((a, b) => b - a).slice(0, 2);
+            const seen = new Set();
+            for (const r of played) {
+              if (r.teamId !== tid || !weeks.includes(r.week) || seen.has(r.pid)) continue;
+              seen.add(r.pid);
+              ensureRow(tid, { id: r.pid.startsWith('name:') ? '' : r.pid, display: r.name });
+            }
+          }
+        }
+      }
+
+      // 4) Positions, snaps, injuries
+      const list = [...rows.values()];
+      for (const r of list) {
         const nvTeam = NFLVERSE_TEAM[r.team] || r.team;
         const snap = nv.snap(r.week, nvTeam, r.name), inj = nv.injury(r.week, nvTeam, r.name);
         r.pos = positions.get(r.pid) || snap?.pos || inj?.pos || '';
@@ -725,41 +817,111 @@
         r.practice = inj ? (inj.practice || '') : (reported ? 'Not listed' : '');
         r.totalTDs = r.rushing + r.receiving + r.other;
       }
+      // Fill a missing position from the same player's other rows (e.g. upcoming games, released players).
+      const posByPid = new Map();
+      for (const r of list) if (r.pos && !posByPid.has(r.pid)) posByPid.set(r.pid, r.pos);
+      for (const r of list) if (!r.pos) r.pos = posByPid.get(r.pid) || '';
 
-      // 4) Player history entering each week (season to date, earlier weeks only)
+      // 5) Team usage per game (for shares) and team history entering each week
+      const teamUse = new Map(); // `${gameId}|${teamId}` -> { carries, targets, rz }
+      for (const r of list) {
+        if (r.upcoming) continue;
+        const k = `${r.gameId}|${r.teamId}`;
+        const t = teamUse.get(k) || { carries: 0, targets: 0, rz: 0, offTDs: 0 };
+        t.carries += r.carries; t.targets += r.targets; t.rz += r.rzCarries + r.rzTargets; t.offTDs += r.rushing + r.receiving;
+        teamUse.set(k, t);
+      }
+      const tg = [...teamGames.values()];
+      const teamWeeksPlayed = new Map(); // teamId -> sorted weeks with a completed game
+      for (const t of tg) { if (!teamWeeksPlayed.has(t.teamId)) teamWeeksPlayed.set(t.teamId, []); teamWeeksPlayed.get(t.teamId).push(t.week); }
+      for (const w of teamWeeksPlayed.values()) w.sort((a, b) => a - b);
+
+      const teamCache = new Map();
+      function teamEntering(teamId, week) {
+        const k = `${teamId}|${week}`;
+        if (teamCache.has(k)) return teamCache.get(k);
+        const gs = tg.filter(t => t.teamId === teamId && t.week < week);
+        const n = gs.length, s = f => gs.reduce((a, t) => a + f(t), 0);
+        const plays = s(t => t.off.plays), trips = s(t => t.off.rzTrips);
+        const out = n ? {
+          n, pts: s(t => t.off.pts) / n, ypp: plays ? s(t => t.off.yds) / plays : '',
+          rzTrips: trips / n, rzTdPct: trips ? 100 * s(t => t.off.rzTD) / trips : '',
+          offTDs: s(t => teamUse.get(`${t.gameId}|${t.teamId}`)?.offTDs || 0) / n
+        } : { n: 0 };
+        teamCache.set(k, out);
+        return out;
+      }
+
+      // 6) Player history entering each week
       const byPlayer = new Map();
-      for (const r of all) { if (!byPlayer.has(r.pid)) byPlayer.set(r.pid, []); byPlayer.get(r.pid).push(r); }
-      for (const list of byPlayer.values()) {
-        list.sort((a, b) => a.week - b.week);
-        let n = 0, tdGames = 0, tds = 0, car = 0, tgt = 0, rz = 0, snapSum = 0, snapN = 0;
-        for (const r of list) {
-          r.prior = { n, tdGames, tds, car: n ? car / n : '', tgt: n ? tgt / n : '', rz: n ? rz / n : '', snap: snapN ? snapSum / snapN : '' };
-          n++; if (r.totalTDs) tdGames++; tds += r.totalTDs; car += r.carries; tgt += r.targets; rz += r.rzCarries + r.rzTargets;
-          if (r.snapPct !== '') { snapSum += r.snapPct; snapN++; }
+      for (const r of list) { if (!byPlayer.has(r.pid)) byPlayer.set(r.pid, []); byPlayer.get(r.pid).push(r); }
+      const avg = (a, f) => a.length ? a.reduce((s, x) => s + f(x), 0) / a.length : '';
+      for (const plist of byPlayer.values()) {
+        plist.sort((a, b) => a.week - b.week);
+        for (let i = 0; i < plist.length; i++) {
+          const r = plist[i];
+          const prev = plist.slice(0, i).filter(p => !p.upcoming && p.week < r.week);
+          const last3 = prev.slice(-3), earlier = prev.slice(0, -3);
+          const snapsOf = a => a.filter(p => p.snapPct !== '');
+          const use = p => teamUse.get(`${p.gameId}|${p.teamId}`) || { carries: 0, targets: 0, rz: 0 };
+          const teamCar = prev.reduce((s, p) => s + use(p).carries, 0);
+          const teamTgt = prev.reduce((s, p) => s + use(p).targets, 0);
+          const teamRz = prev.reduce((s, p) => s + use(p).rz, 0);
+          const sum = f => prev.reduce((s, p) => s + f(p), 0);
+          const teamWeeks = (teamWeeksPlayed.get(r.teamId) || []).filter(w => w < r.week);
+          const lastPlayed = prev.length ? prev[prev.length - 1].week : null;
+          const s3 = avg(snapsOf(last3), p => p.snapPct), sE = avg(snapsOf(earlier), p => p.snapPct);
+          r.prior = {
+            n: prev.length, tdGames: prev.filter(p => p.totalTDs).length, tds: sum(p => p.totalTDs),
+            car: avg(prev, p => p.carries), tgt: avg(prev, p => p.targets),
+            rz: avg(prev, p => p.rzCarries + p.rzTargets), i10: avg(prev, p => p.i10Carries + p.i10Targets),
+            snap: avg(snapsOf(prev), p => p.snapPct),
+            carShare: teamCar ? 100 * sum(p => p.carries) / teamCar : '',
+            tgtShare: teamTgt ? 100 * sum(p => p.targets) / teamTgt : '',
+            rzShare: teamRz ? 100 * sum(p => p.rzCarries + p.rzTargets) / teamRz : '',
+            lastSnap: prev.length && prev[prev.length - 1].snapPct !== '' ? prev[prev.length - 1].snapPct : '',
+            l3Snap: s3, snapTrend: s3 !== '' && sE !== '' ? s3 - sE : '',
+            l3Car: avg(last3, p => p.carries), l3Tgt: avg(last3, p => p.targets), l3Rz: avg(last3, p => p.rzCarries + p.rzTargets),
+            teamGames: teamWeeks.length,
+            missed: Math.max(0, teamWeeks.length - prev.length), // team games this season the player didn't appear in
+            playedLast: teamWeeks.length ? (lastPlayed === teamWeeks[teamWeeks.length - 1] ? 'Yes' : 'No') : '',
+            weeksSince: lastPlayed === null ? '' : r.week - lastPlayed,
+            byeLastWeek: r.week > 1 ? ((teamWeeksPlayed.get(r.teamId) || []).includes(r.week - 1) ? 'No' : 'Yes') : ''
+          };
         }
       }
 
-      // 5) Opponent defense, entering each week (1 = allows the fewest per game). Week 1 is blank.
+      // Weeks listed Out on the injury report before this week (players who sat out have no box-score row,
+      // so this reads the injury file directly).
+      for (const r of list) {
+        const nvTeam = NFLVERSE_TEAM[r.team] || r.team;
+        let c = 0;
+        for (let w = 1; w < r.week; w++) if (nv.injury(w, nvTeam, r.name)?.report === 'Out') c++;
+        r.prior.listedOut = nv.hasInjuries ? c : '';
+      }
+
+      // 7) Opponent defense entering each week
       const METRICS = ['pts', 'yds', 'rush', 'pass'];
       const POS_GROUP = { QB: 'QB', RB: 'RB', FB: 'RB', WR: 'WR', TE: 'TE' };
-      const posTDs = []; // { week, defId, grp, tds } offensive TDs allowed
-      for (const r of all) {
-        const grp = POS_GROUP[r.pos];
-        const tds = r.rushing + r.receiving;
+      const posTDs = []; // { week, defId, grp, tds } offensive TDs allowed, by scorer position
+      for (const r of list) {
+        const grp = POS_GROUP[r.pos], tds = r.rushing + r.receiving;
         if (r.completed && grp && tds) posTDs.push({ week: r.week, defId: r.oppId, grp, tds });
       }
-      const rankOf = (entries, v) => 1 + entries.filter(([, o]) => o < v - 1e-9).length; // ties share a rank
+      const rankOf = (entries, v) => 1 + entries.filter(([, o]) => o < v - 1e-9).length; // 1 = fewest allowed; ties share
       const defCache = new Map();
       function defenseEntering(week) {
         if (defCache.has(week)) return defCache.get(week);
         const agg = new Map();
-        for (const d of defenseGames) {
-          if (d.week >= week) continue;
-          const a = agg.get(d.teamId) || { n: 0, pts: 0, yds: 0, rush: 0, pass: 0, QB: 0, RB: 0, WR: 0, TE: 0 };
-          a.n++; for (const k of METRICS) a[k] += d[k];
-          agg.set(d.teamId, a);
+        for (const t of tg) {
+          if (t.week >= week) continue;
+          const a = agg.get(t.teamId) || { n: 0, pts: 0, yds: 0, rush: 0, pass: 0, rzTD: 0, rzTrips: 0, QB: 0, RB: 0, WR: 0, TE: 0, weeks: [], through: '' };
+          a.n++; for (const k of METRICS) a[k] += t.allowed[k];
+          a.rzTD += t.allowed.rzTD; a.rzTrips += t.allowed.rzTrips;
+          a.weeks.push(t.week); if (t.date > a.through) a.through = t.date;
+          agg.set(t.teamId, a);
         }
-        for (const t of posTDs) if (t.week < week && agg.has(t.defId)) agg.get(t.defId)[t.grp] += t.tds;
+        for (const p of posTDs) if (p.week < week && agg.has(p.defId)) agg.get(p.defId)[p.grp] += p.tds;
         const out = new Map();
         for (const k of [...METRICS, 'QB', 'RB', 'WR', 'TE']) {
           const avgs = [...agg.entries()].map(([tid, a]) => [tid, a[k] / a.n]);
@@ -769,52 +931,90 @@
             out.get(tid)[k + 'Avg'] = v;
           }
         }
+        for (const [tid, a] of agg) {
+          const o = out.get(tid);
+          o.n = a.n; o.through = a.through; o.rzTdPct = a.rzTrips ? 100 * a.rzTD / a.rzTrips : '';
+          // Recent form: TDs allowed to each position over the defense's last 3 and last 5 games
+          const ws = [...a.weeks].sort((x, y) => y - x);
+          for (const [label, nGames] of [['L3', 3], ['L5', 5]]) {
+            const recent = new Set(ws.slice(0, nGames));
+            for (const grp of ['QB', 'RB', 'WR', 'TE']) {
+              const tds = posTDs.filter(p => p.defId === tid && p.grp === grp && recent.has(p.week)).reduce((s, p) => s + p.tds, 0);
+              o[grp + label] = recent.size ? tds / recent.size : '';
+            }
+          }
+        }
         defCache.set(week, out);
         return out;
       }
 
-      // 6) CSV text
+      // 8) CSV text
       const header = [
         'Season','Week','Game Date','Game Status','Player','Position','Team','Opponent','Home/Away',
+        // outcomes (blank for upcoming games)
         'Scored TD','Total TDs','Rushing TDs','Receiving TDs','Other TDs','TD Types',
-        'Carries','Targets','Receptions','Rush Yds','Rec Yds','Pass Att','RZ Carries','RZ Targets',
-        'Off Snaps','Off Snap %',
-        'Team Implied Pts','Team Spread','Game Total',
+        'Carries','Targets','Receptions','Rush Yds','Rec Yds','Pass Att',
+        'RZ Carries','RZ Targets','Inside-10 Carries','Inside-10 Targets','Off Snaps','Off Snap %',
+        // pregame: game context
+        'Team Implied Pts','Team Spread','Game Total','Rest Days',
         'Injury Report Status','Practice Status',
-        'Prior Games','Prior TD Games','Prior TDs','Prior Avg Carries','Prior Avg Targets','Prior Avg RZ Opps','Prior Avg Snap %',
-        'Opp Def Rank: Points Allowed','Opp Def Rank: Total Yds Allowed',
-        'Opp Def Rank: Rush Yds Allowed','Opp Def Rank: Pass Yds Allowed',
-        'Opp TDs Allowed/G to Position','Opp Def Rank: TDs Allowed to Position'
+        // pregame: player history (earlier weeks only)
+        'Prior Games','Prior TD Games','Prior TDs',
+        'Prior Avg Carries','Prior Avg Targets','Prior Avg RZ Opps','Prior Avg Inside-10 Opps','Prior Avg Snap %',
+        'Prior Carry Share %','Prior Target Share %','Prior RZ Opp Share %',
+        'Last Game Snap %','Last 3 Avg Snap %','Snap % Trend (Last 3 vs Earlier)',
+        'Last 3 Avg Carries','Last 3 Avg Targets','Last 3 Avg RZ Opps',
+        // pregame: availability
+        'Team Prior Games','Prior Games Missed','Prior Weeks Listed Out','Played Team\'s Last Game','Weeks Since Last Game','Team Bye Last Week',
+        // pregame: team offense
+        'Team Prior Pts/G','Team Prior Yds/Play','Team Prior RZ Trips/G','Team Prior RZ TD %','Team Prior Off TDs/G',
+        // pregame: opponent defense
+        'Opp Def Games Used','Opp Def Stats Through',
+        'Opp Def Rank: Points Allowed','Opp Def Rank: Total Yds Allowed','Opp Def Rank: Rush Yds Allowed','Opp Def Rank: Pass Yds Allowed',
+        'Opp RZ TD % Allowed',
+        'Opp TDs Allowed/G to Position','Opp Def Rank: TDs Allowed to Position',
+        'Opp TDs Allowed/G to Position (Last 3)','Opp TDs Allowed/G to Position (Last 5)'
       ];
       const esc = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-      const r1 = v => v === '' ? '' : Math.round(v * 10) / 10;
-      const r2 = v => v === '' || v === undefined ? '' : Math.round(v * 100) / 100;
-      all.sort((a, b) => a.week - b.week || b.totalTDs - a.totalTDs || a.team.localeCompare(b.team) || a.name.localeCompare(b.name));
+      const r1 = v => v === '' || v === undefined || v === null ? '' : Math.round(v * 10) / 10;
+      const r2 = v => v === '' || v === undefined || v === null ? '' : Math.round(v * 100) / 100;
+      const ymd = iso => { if (!iso) return ''; const d = new Date(iso); return fmt.yyyymmdd(d).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'); };
+      list.sort((a, b) => a.week - b.week || (b.totalTDs - a.totalTDs) || a.team.localeCompare(b.team) || a.name.localeCompare(b.name));
       const lines = [header.join(',')];
-      for (const r of all) {
+      for (const r of list) {
         const types = [];
         if (r.rushing) types.push('Rushing');
         if (r.receiving) types.push('Receiving');
         types.push(...r.otherTypes);
-        const d = r.date ? new Date(r.date) : null;
-        const dateStr = d ? fmt.yyyymmdd(d).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') : '';
         const def = defenseEntering(r.week).get(String(r.oppId)) || {};
+        const team = teamEntering(r.teamId, r.week);
         const grp = POS_GROUP[r.pos];
+        const P = r.prior, c = r.ctx || {};
+        const outcome = v => r.upcoming ? '' : v;
         lines.push([
-          currentSeasonYear, r.week, dateStr, r.status, r.name, r.pos, r.team, r.opp, r.homeAway,
-          r.totalTDs ? 1 : 0, r.totalTDs, r.rushing, r.receiving, r.other, types.join(' + '),
-          r.carries, r.targets, r.rec, r.rushYds, r.recYds, r.passAtt, r.rzCarries, r.rzTargets,
-          r.snaps, r.snapPct,
-          r.line ? r1(r.line.implied) : '', r.line ? r.line.spread : '', r.line ? r.line.total : '',
+          season, r.week, ymd(r.date), r.status, r.name, r.pos, r.team, r.opp, r.homeAway,
+          outcome(r.totalTDs ? 1 : 0), outcome(r.totalTDs), outcome(r.rushing), outcome(r.receiving), outcome(r.other), outcome(types.join(' + ')),
+          outcome(r.carries), outcome(r.targets), outcome(r.rec), outcome(r.rushYds), outcome(r.recYds), outcome(r.passAtt),
+          outcome(r.rzCarries), outcome(r.rzTargets), outcome(r.i10Carries), outcome(r.i10Targets), outcome(r.snaps), outcome(r.snapPct),
+          r1(c.implied), c.spread ?? '', c.total ?? '', c.rest ?? '',
           r.injury, r.practice,
-          r.prior.n, r.prior.tdGames, r.prior.tds, r1(r.prior.car), r1(r.prior.tgt), r1(r.prior.rz), r1(r.prior.snap),
+          P.n, P.tdGames, P.tds,
+          r1(P.car), r1(P.tgt), r1(P.rz), r1(P.i10), r1(P.snap),
+          r1(P.carShare), r1(P.tgtShare), r1(P.rzShare),
+          P.lastSnap, r1(P.l3Snap), r1(P.snapTrend),
+          r1(P.l3Car), r1(P.l3Tgt), r1(P.l3Rz),
+          P.teamGames, P.missed, P.listedOut, P.playedLast, P.weeksSince, P.byeLastWeek,
+          r1(team.pts), r2(team.ypp), r2(team.rzTrips), r1(team.rzTdPct), r2(team.offTDs),
+          def.n ?? 0, ymd(def.through),
           ...METRICS.map(k => def[k] ?? ''),
-          grp ? r2(def[grp + 'Avg']) : '', grp ? (def[grp] ?? '') : ''
+          r1(def.rzTdPct),
+          grp ? r2(def[grp + 'Avg']) : '', grp ? (def[grp] ?? '') : '',
+          grp ? r2(def[grp + 'L3']) : '', grp ? r2(def[grp + 'L5']) : ''
         ].map(esc).join(','));
       }
-      const playedWeeks = Math.max(...games.map(g => g.week));
-      window.__nflCsvDiagnostics = { rzUnmatched, hasSnaps: nv.hasSnaps, hasInjuries: nv.hasInjuries };
-      return { csv: lines.join('\r\n'), weeks: playedWeeks, rowCount: all.length };
+      const playedWeeks = games.length ? Math.max(...games.map(g => g.week)) : 0;
+      window.__nflCsvDiagnostics = { ...diag, hasSnaps: nv.hasSnaps, hasInjuries: nv.hasInjuries, upcomingGames: upcoming.length };
+      return { csv: lines.join('\r\n'), weeks: playedWeeks, rowCount: list.length, upcomingWeek: upcoming.length ? lastWeek : null };
     }
 
     function downloadText(filename, text) {
@@ -1335,12 +1535,18 @@
 
       const csvBtn = document.getElementById('nflCsvBtn');
       const csvStatus = document.getElementById('nflCsvStatus');
+      const csvSeasonEl = document.getElementById('csvSeason');
+      for (let y = currentSeasonYear; y >= currentSeasonYear - 2; y--) {
+        csvSeasonEl.insertAdjacentHTML('beforeend', `<option value="${y}">${y}${y === currentSeasonYear ? ' (current)' : ''}</option>`);
+      }
       csvBtn.addEventListener('click', async () => {
         csvBtn.disabled = true;
         try {
-          const { csv, weeks, rowCount } = await buildNFLSeasonCSV(msg => { csvStatus.textContent = msg; });
-          downloadText(`nfl-td-scorers-${currentSeasonYear}-weeks-1-${weeks}.csv`, csv);
-          csvStatus.textContent = `Downloaded ${rowCount} rows (weeks 1–${weeks}).`;
+          const season = parseInt(csvSeasonEl.value, 10);
+          const { csv, weeks, rowCount, upcomingWeek } = await buildNFLSeasonCSV(season, msg => { csvStatus.textContent = msg; });
+          const span = weeks ? `weeks-1-${weeks}` : 'preseason';
+          downloadText(`nfl-player-games-${season}-${span}${upcomingWeek ? `-plus-week-${upcomingWeek}` : ''}.csv`, csv);
+          csvStatus.textContent = `Downloaded ${rowCount} rows (${season}, weeks 1–${weeks}${upcomingWeek ? ` + upcoming week ${upcomingWeek}` : ''}).`;
         } catch (err) {
           console.error(err);
           csvStatus.textContent = err?.message || 'Could not build CSV.';
