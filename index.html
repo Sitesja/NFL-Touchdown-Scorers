@@ -452,13 +452,15 @@
           for (const c of (comp?.competitors || [])) {
             sides[String(c?.team?.id)] = { abbr: c?.team?.abbreviation || '', homeAway: c?.homeAway === 'home' ? 'Home' : 'Away' };
           }
-          games.push({ week: w, id: ev.id, date: ev.date, status: st.completed ? 'Final' : (st.shortDetail || 'In progress'), sides });
+          games.push({ week: w, id: ev.id, date: ev.date, completed: !!st.completed,
+                       status: st.completed ? 'Final' : (st.shortDetail || 'In progress'), sides });
         }
       }
       if (!games.length) throw new Error('No games have been played yet this season.');
 
-      // 2) Game summaries -> touchdowns per player
+      // 2) Game summaries -> touchdowns per player, plus what each defense allowed
       const rows = new Map();
+      const defenseGames = []; // { week, teamId, pts, yds, rush, pass } allowed by teamId's defense
       let done = 0;
       const BATCH = 6;
       for (let i = 0; i < games.length; i += BATCH) {
@@ -466,6 +468,20 @@
           const data = await fetch(urls.nfl.summary(g.id)).then(r => r.json());
           const roster = buildRosterNFL(data);
           const teamIds = Object.keys(g.sides);
+
+          if (g.completed) {
+            const offense = {}; // teamId -> what that offense gained
+            for (const t of (data?.boxscore?.teams || [])) {
+              const stat = n => parseFloat((t.statistics || []).find(s => s.name === n)?.displayValue) || 0;
+              offense[String(t?.team?.id)] = { yds: stat('totalYards'), rush: stat('rushingYards'), pass: stat('netPassingYards') };
+            }
+            for (const c of (data?.header?.competitions?.[0]?.competitors || [])) {
+              const tid = String(c?.team?.id), oppId = teamIds.find(t => t !== tid);
+              const opp = offense[oppId];
+              const oppScore = (data.header.competitions[0].competitors.find(x => String(x?.team?.id) === oppId) || {}).score;
+              if (opp && oppId) defenseGames.push({ week: g.week, teamId: tid, pts: parseFloat(oppScore) || 0, ...opp });
+            }
+          }
           for (const p of (data.scoringPlays || [])) {
             if (!isTouchdownNFL(p)) continue;
             const tid = String(p?.team?.id || '');
@@ -477,7 +493,7 @@
             if (!rows.has(key)) rows.set(key, {
               week: g.week, date: g.date, status: g.status, name,
               team: side?.abbr || p?.team?.abbreviation || '',
-              opp: oppId ? g.sides[oppId].abbr : '',
+              opp: oppId ? g.sides[oppId].abbr : '', oppId,
               homeAway: side?.homeAway || '',
               rushing: 0, receiving: 0, other: 0, otherTypes: new Set()
             });
@@ -491,9 +507,37 @@
         }));
       }
 
-      // 3) CSV text
+      // 3) Opponent defense ranks entering each week (1 = allows the fewest per game).
+      //    Uses only games completed before that week, so Week 1 has no rank.
+      const METRICS = ['pts', 'yds', 'rush', 'pass'];
+      const ranksByWeek = new Map(); // week -> teamId -> {pts,yds,rush,pass}
+      function defenseRanksEntering(week) {
+        if (ranksByWeek.has(week)) return ranksByWeek.get(week);
+        const agg = new Map();
+        for (const d of defenseGames) {
+          if (d.week >= week) continue;
+          const a = agg.get(d.teamId) || { n: 0, pts: 0, yds: 0, rush: 0, pass: 0 };
+          a.n++; for (const k of METRICS) a[k] += d[k];
+          agg.set(d.teamId, a);
+        }
+        const out = new Map();
+        for (const k of METRICS) {
+          const avgs = [...agg.entries()].map(([tid, a]) => [tid, a[k] / a.n]);
+          for (const [tid, v] of avgs) {
+            const rank = 1 + avgs.filter(([, o]) => o < v - 1e-9).length; // ties share a rank
+            if (!out.has(tid)) out.set(tid, {});
+            out.get(tid)[k] = rank;
+          }
+        }
+        ranksByWeek.set(week, out);
+        return out;
+      }
+
+      // 4) CSV text
       const header = ['Season','Week','Game Date','Player','Team','Opponent','Home/Away',
-                      'Rushing TDs','Receiving TDs','Other TDs','Total TDs','TD Types','Game Status'];
+                      'Rushing TDs','Receiving TDs','Other TDs','Total TDs','TD Types','Game Status',
+                      'Opp Def Rank: Points Allowed','Opp Def Rank: Total Yds Allowed',
+                      'Opp Def Rank: Rush Yds Allowed','Opp Def Rank: Pass Yds Allowed'];
       const esc = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
       const sorted = [...rows.values()].sort((a, b) =>
         a.week - b.week || (b.rushing + b.receiving + b.other) - (a.rushing + a.receiving + a.other) || a.name.localeCompare(b.name));
@@ -507,7 +551,9 @@
         const dateStr = d ? fmt.yyyymmdd(d).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') : '';
         lines.push([currentSeasonYear, r.week, dateStr, r.name, r.team, r.opp, r.homeAway,
                     r.rushing, r.receiving, r.other, r.rushing + r.receiving + r.other,
-                    types.join(' + '), r.status].map(esc).join(','));
+                    types.join(' + '), r.status,
+                    ...METRICS.map(k => defenseRanksEntering(r.week).get(String(r.oppId))?.[k] ?? '')
+                   ].map(esc).join(','));
       }
       const playedWeeks = Math.max(...games.map(g => g.week));
       return { csv: lines.join('\r\n'), weeks: playedWeeks, rowCount: sorted.length };
