@@ -37,6 +37,11 @@
     #controls select {
       padding:6px 8px; border:1px solid var(--rule); border-radius:6px; font-size:.95em; background:#fff;
     }
+    #controls button {
+      padding:6px 10px; border:1px solid var(--accent); border-radius:6px; font-size:.95em;
+      background:var(--accent); color:#fff; cursor:pointer;
+    }
+    #controls button:disabled { opacity:.6; cursor:progress; }
     .hidden { display:none !important; }
 
     /* Leaders ribbon */
@@ -108,6 +113,8 @@
     <span id="controlsNFL">
       <label for="weekSelect">Week:</label>
       <select id="weekSelect"></select>
+      <button id="nflCsvBtn" type="button" title="All TD scorers for every week played so far">Download season CSV</button>
+      <span id="nflCsvStatus" class="small"></span>
     </span>
 
     <!-- MLB only: stat selector -->
@@ -351,6 +358,12 @@
     // ---------- sport-specific extractors ----------
     function tdCategoryNFL(p) {
       const txt = (p.text || '').toLowerCase();
+      const typ = String(p?.type?.text || '').toLowerCase();
+      if (/passing touchdown/.test(typ)) return 'Receiving';
+      if (/rushing touchdown/.test(typ)) return 'Rushing';
+      if (/interception return/.test(typ)) return 'INT Return';
+      if (/fumble return/.test(typ)) return 'Fumble Return';
+      if (/kickoff return|punt return|blocked punt/.test(typ)) return 'Return';
       const players = Array.isArray(p.players) ? p.players : [];
       const types = players.map(x => (x?.type?.text || '').toLowerCase()).join(' ');
       if (/receive|reception|receiver/.test(types)) return 'Receiving';
@@ -364,6 +377,149 @@
       if (/interception.*return|pick[- ]?six/.test(txt)) return 'INT Return';
       if (/fumble.*return|fumble.*recovery/.test(txt)) return 'Fumble Return';
       return 'TD';
+    }
+
+    // NFL: is this scoring play a touchdown?
+    function isTouchdownNFL(p) {
+      if (p?.scoringType?.name) return p.scoringType.name === 'touchdown';
+      return String(p?.type?.text || '').toLowerCase().includes('touchdown') || /\btd\b|touchdown/.test((p?.text||'').toLowerCase());
+    }
+
+    // NFL: pull the scorer's name out of the play text.
+    // Handles "Parker Washington 50 Yd pass from ...", "Gracen Halton Fumble Recovery in End Zone",
+    // and play-by-play style "(No Huddle) J.Gibbs up the middle for 1 yard, TOUCHDOWN."
+    function parseScorerNameNFL(p) {
+      const named = (Array.isArray(p?.players) ? p.players : []).find(x => x?.athlete?.displayName);
+      if (named) return named.athlete.displayName;
+      const t = String(p?.text || '').replace(/^(\([^)]*\)\s*)+/, '').trim();
+      let m;
+      // Laterals: the last player to receive the ball scored.
+      const laterals = [...t.matchAll(/\blateral(?:ed)?\s+to\s+([A-Z][\w'.\-]*(?:\s+[A-Z][\w'.\-]*)*?)\s+for\b/g)];
+      if (laterals.length) return laterals[laterals.length - 1][1].trim();
+      if (/TOUCHDOWN|\bcomplete pass to\b/.test(t)) {
+        m = /\bpass\b.*?\bto\s+([A-Z][\w'.\-]*(?:\s+[A-Z][\w'.\-]*)*?)\s+(?:for|to|at|in|pushed|ran)\b/.exec(t)
+         || /^([A-Z][\w'\-]*\.\s?[A-Z][\w'.\-]*)/.exec(t);
+        if (m) return m[1].trim();
+      }
+      m = /^(.+?)\s+\d+\s*(?:yd|yard)/i.exec(t)
+       || /^(.+?)\s+(?:fumble|interception|punt|kickoff|blocked|recovery|return|pass|rush|run)\b/i.exec(t);
+      return m ? m[1].trim() : 'Unknown';
+    }
+
+    // NFL: expand abbreviated names like "J.Gibbs" using the game's boxscore roster.
+    function buildRosterNFL(summaryJson) {
+      const byTeam = new Map(); // teamId -> [{first,last,display}]
+      for (const block of (summaryJson?.boxscore?.players || [])) {
+        const tid = String(block?.team?.id || '');
+        const seen = byTeam.get(tid) || [];
+        for (const g of (block?.statistics || [])) for (const a of (g?.athletes || [])) {
+          const at = a?.athlete; if (!at?.displayName) continue;
+          if (!seen.some(s => s.display === at.displayName)) seen.push({ first: at.firstName || '', last: at.lastName || '', display: at.displayName });
+        }
+        byTeam.set(tid, seen);
+      }
+      return byTeam;
+    }
+    // Also normalizes suffixes ("Deebo Samuel" vs "Deebo Samuel Sr.") to ESPN's roster name.
+    function resolveNameNFL(name, teamId, roster) {
+      if (!roster) return name;
+      const players = roster.get(String(teamId)) || [];
+      const norm = s => s.toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, '').replace(/[^a-z]/g, '');
+      const m = /^([A-Z])\.\s?(.+)$/.exec(name);
+      const hits = m
+        ? players.filter(a => a.first[0] === m[1] && norm(a.last) === norm(m[2]))
+        : players.filter(a => norm(a.display) === norm(name));
+      return hits.length === 1 ? hits[0].display : name;
+    }
+
+    // ---------- NFL season CSV ----------
+    // One row per player per game, for every regular-season week with games played so far.
+    async function buildNFLSeasonCSV(onProgress) {
+      const lastWeek = currentSeasonType === 2 ? currentWeek
+                     : currentSeasonType >= 3 ? TOTAL_REG_WEEKS : 0;
+      if (!lastWeek) throw new Error('No regular-season weeks have been played yet.');
+
+      // 1) Scoreboards for each week -> games that have kicked off
+      const games = [];
+      for (let w = 1; w <= lastWeek; w++) {
+        onProgress(`Loading schedule: week ${w} of ${lastWeek}…`);
+        const sb = await fetch(urls.nfl.scoreboard({ seasontype: 2, week: w, year: currentSeasonYear })).then(r => r.json());
+        for (const ev of (sb.events || [])) {
+          const comp = ev?.competitions?.[0];
+          const st = comp?.status?.type || ev?.status?.type || {};
+          if (st.state === 'pre') continue;
+          const sides = {};
+          for (const c of (comp?.competitors || [])) {
+            sides[String(c?.team?.id)] = { abbr: c?.team?.abbreviation || '', homeAway: c?.homeAway === 'home' ? 'Home' : 'Away' };
+          }
+          games.push({ week: w, id: ev.id, date: ev.date, status: st.completed ? 'Final' : (st.shortDetail || 'In progress'), sides });
+        }
+      }
+      if (!games.length) throw new Error('No games have been played yet this season.');
+
+      // 2) Game summaries -> touchdowns per player
+      const rows = new Map();
+      let done = 0;
+      const BATCH = 6;
+      for (let i = 0; i < games.length; i += BATCH) {
+        await Promise.all(games.slice(i, i + BATCH).map(async g => {
+          const data = await fetch(urls.nfl.summary(g.id)).then(r => r.json());
+          const roster = buildRosterNFL(data);
+          const teamIds = Object.keys(g.sides);
+          for (const p of (data.scoringPlays || [])) {
+            if (!isTouchdownNFL(p)) continue;
+            const tid = String(p?.team?.id || '');
+            const side = g.sides[tid];
+            const oppId = teamIds.find(t => t !== tid);
+            const name = resolveNameNFL(parseScorerNameNFL(p), tid, roster);
+            const cat = tdCategoryNFL(p);
+            const key = `${g.week}|${g.id}|${tid}|${name}`;
+            if (!rows.has(key)) rows.set(key, {
+              week: g.week, date: g.date, status: g.status, name,
+              team: side?.abbr || p?.team?.abbreviation || '',
+              opp: oppId ? g.sides[oppId].abbr : '',
+              homeAway: side?.homeAway || '',
+              rushing: 0, receiving: 0, other: 0, otherTypes: new Set()
+            });
+            const r = rows.get(key);
+            if (cat === 'Rushing') r.rushing++;
+            else if (cat === 'Receiving') r.receiving++;
+            else { r.other++; r.otherTypes.add(cat === 'TD' ? 'Other' : cat); }
+          }
+          done++;
+          onProgress(`Loading games: ${done} of ${games.length}…`);
+        }));
+      }
+
+      // 3) CSV text
+      const header = ['Season','Week','Game Date','Player','Team','Opponent','Home/Away',
+                      'Rushing TDs','Receiving TDs','Other TDs','Total TDs','TD Types','Game Status'];
+      const esc = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+      const sorted = [...rows.values()].sort((a, b) =>
+        a.week - b.week || (b.rushing + b.receiving + b.other) - (a.rushing + a.receiving + a.other) || a.name.localeCompare(b.name));
+      const lines = [header.join(',')];
+      for (const r of sorted) {
+        const types = [];
+        if (r.rushing) types.push('Rushing');
+        if (r.receiving) types.push('Receiving');
+        types.push(...r.otherTypes);
+        const d = r.date ? new Date(r.date) : null;
+        const dateStr = d ? fmt.yyyymmdd(d).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') : '';
+        lines.push([currentSeasonYear, r.week, dateStr, r.name, r.team, r.opp, r.homeAway,
+                    r.rushing, r.receiving, r.other, r.rushing + r.receiving + r.other,
+                    types.join(' + '), r.status].map(esc).join(','));
+      }
+      const playedWeeks = Math.max(...games.map(g => g.week));
+      return { csv: lines.join('\r\n'), weeks: playedWeeks, rowCount: sorted.length };
+    }
+
+    function downloadText(filename, text) {
+      const blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }
 
     // MLB: extract hitters from boxscore
@@ -740,15 +896,14 @@
 
             if (sport === 'nfl') {
               const plays = Array.isArray(data.scoringPlays) ? data.scoringPlays : [];
+              const roster = buildRosterNFL(data);
               for (const p of plays) {
-                const isTD = String(p?.type?.text || '').toLowerCase().includes('touchdown') || /\btd\b|touchdown/.test((p.text||'').toLowerCase());
-                if (!isTD) continue;
+                if (!isTouchdownNFL(p)) continue;
                 const teamAbbr = p?.team?.abbreviation || '';
                 const teamId = p?.team?.id;
                 const meta = (teamId && teamMetaById.get(teamId)) || teamMetaByAbbr.get(teamAbbr) || { abbr: teamAbbr, logo: '' };
                 const cat = tdCategoryNFL(p);
-                const primary = (Array.isArray(p.players)?p.players:[]).find(x => x?.athlete?.displayName);
-                const name = (primary?.athlete?.displayName || ((/([A-Z][\w.\-'\s]+)\s+\d+\s*(yd|yard)/i.exec(p.text || '') || [])[1]) || 'Unknown').trim();
+                const name = resolveNameNFL(parseScorerNameNFL(p), teamId, roster);
 
                 const row = ensureGlobalRow(name, meta.abbr || teamAbbr, meta.logo);
                 row.total += 1; row.byType[cat] = (row.byType[cat]||0) + 1; row.statValue = row.total;
@@ -871,6 +1026,22 @@
         updateControlVisibility();
         if (viewModeEl.value === 'matchups' && gamesEl.innerHTML.trim() === '') {
           renderMatchups();
+        }
+      });
+
+      const csvBtn = document.getElementById('nflCsvBtn');
+      const csvStatus = document.getElementById('nflCsvStatus');
+      csvBtn.addEventListener('click', async () => {
+        csvBtn.disabled = true;
+        try {
+          const { csv, weeks, rowCount } = await buildNFLSeasonCSV(msg => { csvStatus.textContent = msg; });
+          downloadText(`nfl-td-scorers-${currentSeasonYear}-weeks-1-${weeks}.csv`, csv);
+          csvStatus.textContent = `Downloaded ${rowCount} rows (weeks 1–${weeks}).`;
+        } catch (err) {
+          console.error(err);
+          csvStatus.textContent = err?.message || 'Could not build CSV.';
+        } finally {
+          csvBtn.disabled = false;
         }
       });
 
